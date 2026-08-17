@@ -62,8 +62,12 @@ interface ServerConfig {
   publishableKey: string;
   accountId: string;
   prices: {
-    starter: string;
+    starter?: string;
     pro: string;
+    proplus: string;
+    team: string;
+    business: string;
+    enterprise: string;
   };
   currency: string;
   taxEnabled: boolean;
@@ -171,8 +175,11 @@ export default function App() {
     publishableKey: '',
     accountId: '',
     prices: {
-      starter: 'price_1U5VUcDy28wjEXYsN7AwEJMb',
-      pro: 'price_1U5VUcDy28wjEXYsMwd5Ltxo'
+      pro: 'price_1U5YrOGv8CweAODPwgN386zn',
+      proplus: 'price_1U5Yv0Gv8CweAODP9wXwxWIC',
+      team: 'price_1U5YzwGv8CweAODP0QM45ZJu',
+      business: 'price_1U5YzxGv8CweAODPFcsJt0UI',
+      enterprise: 'price_1U5YzxGv8CweAODPYril7TcL',
     },
     currency: 'usd',
     taxEnabled: false,
@@ -562,10 +569,15 @@ export default function App() {
     }
   };
 
-  const handleCheckoutSubscription = async (planKey: 'starter' | 'pro') => {
+  const handleCheckoutSubscription = async (planKey: 'pro' | 'proplus' | 'team' | 'business' | 'enterprise' | 'starter') => {
     try {
       setLoadingAction(`sub_${planKey}`);
-      const priceId = planKey === 'starter' ? serverConfig.prices.starter : serverConfig.prices.pro;
+      let priceId = serverConfig.prices.pro;
+      if (planKey === 'proplus') priceId = serverConfig.prices.proplus;
+      else if (planKey === 'team') priceId = serverConfig.prices.team;
+      else if (planKey === 'business') priceId = serverConfig.prices.business;
+      else if (planKey === 'enterprise') priceId = serverConfig.prices.enterprise;
+      else if (planKey === 'starter' || planKey === 'pro') priceId = serverConfig.prices.pro;
 
       const res = await fetch('/api/create-subscription-checkout', {
         method: 'POST',
@@ -2128,79 +2140,137 @@ func main() {
               </div>
             </div>
 
-            <div className="pricing-grid">
+            <div className="pricing-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
+              {/* 1. Pro ($12.99) */}
               <div className="pricing-card">
                 <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro</div>
                 <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Unlimited Flash model with Pro model access.</p>
 
                 <div className="plan-price">
                   ${billingCycle === 'monthly' ? '12.99' : '10.99'}
-                  <span className="plan-price-period">/ month</span>
+                  <span className="plan-price-period">/ mo</span>
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Unlimited Use Keepseed-Flash</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Access to Keepseed-Pro (DeepSeek-R1)</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000 Requests/min rate limit</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key generation & distribution</li>
-                </ul>
-
-                <button 
-                  onClick={() => handleCheckoutSubscription('starter')}
-                  disabled={loadingAction === 'sub_starter'}
-                  className="btn btn-secondary btn-block"
-                >
-                  {loadingAction === 'sub_starter' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Pro ($12.99)'}
-                </button>
-              </div>
-
-              <div className="pricing-card featured">
-                <div className="featured-pill">RECOMMENDED</div>
-                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro Plus</div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Highest model quotas + $10/mo included API credits.</p>
-
-                <div className="plan-price">
-                  ${billingCycle === 'monthly' ? '22.99' : '18.99'}
-                  <span className="plan-price-period">/ month</span>
-                </div>
-
-                <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Everything in Keepseed Pro</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Higher Keepseed-Pro (R1) limits</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $10 of monthly API token credits added</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000 Requests/min rate limit</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Priority email & chat support</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Unlimited Keepseed-Flash</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Access to Keepseed-Pro (R1)</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000 RPM rate limit</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key distribution</li>
                 </ul>
 
                 <button 
                   onClick={() => handleCheckoutSubscription('pro')}
                   disabled={loadingAction === 'sub_pro'}
-                  className="btn btn-primary btn-block"
+                  className="btn btn-secondary btn-block"
                 >
-                  {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Pro Plus ($22.99)'}
+                  {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($12.99)'}
                 </button>
               </div>
 
-              <div className="pricing-card">
-                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Enterprise</div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>For high volume & bespoke SLA.</p>
+              {/* 2. Pro Plus ($22.99) */}
+              <div className="pricing-card featured">
+                <div className="featured-pill">POPULAR</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro Plus</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Higher model quotas + $10/mo included API credits.</p>
 
                 <div className="plan-price">
-                  Custom
+                  ${billingCycle === 'monthly' ? '22.99' : '18.99'}
+                  <span className="plan-price-period">/ mo</span>
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Unlimited customized quota</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Dedicated cluster instance</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 99.99% uptime SLA guarantee</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Dedicated Slack engineer channel</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Everything in Pro</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Higher Keepseed-Pro limits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $10/mo included API credits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 5,000 RPM rate limit</li>
                 </ul>
 
                 <button 
-                  onClick={() => setActiveTab('help')}
+                  onClick={() => handleCheckoutSubscription('proplus')}
+                  disabled={loadingAction === 'sub_proplus'}
+                  className="btn btn-primary btn-block"
+                >
+                  {loadingAction === 'sub_proplus' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($22.99)'}
+                </button>
+              </div>
+
+              {/* 3. Team ($49.99) */}
+              <div className="pricing-card">
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Team</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Multi-seat collaboration + $25/mo API credits.</p>
+
+                <div className="plan-price">
+                  ${billingCycle === 'monthly' ? '49.99' : '39.99'}
+                  <span className="plan-price-period">/ mo</span>
+                </div>
+
+                <ul className="plan-features-list">
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 25,000,000 token quota</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $25/mo included API credits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000 RPM rate limit</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Up to 5 team sub-keys</li>
+                </ul>
+
+                <button 
+                  onClick={() => handleCheckoutSubscription('team')}
+                  disabled={loadingAction === 'sub_team'}
                   className="btn btn-secondary btn-block"
                 >
-                  Contact Sales
+                  {loadingAction === 'sub_team' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($49.99)'}
+                </button>
+              </div>
+
+              {/* 4. Business ($119.99) */}
+              <div className="pricing-card">
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Business</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>High-volume production + $60/mo API credits.</p>
+
+                <div className="plan-price">
+                  ${billingCycle === 'monthly' ? '119.99' : '99.99'}
+                  <span className="plan-price-period">/ mo</span>
+                </div>
+
+                <ul className="plan-features-list">
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 75,000,000 token quota</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $60/mo included API credits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 25,000 RPM rate limit</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Priority routing failover</li>
+                </ul>
+
+                <button 
+                  onClick={() => handleCheckoutSubscription('business')}
+                  disabled={loadingAction === 'sub_business'}
+                  className="btn btn-secondary btn-block"
+                >
+                  {loadingAction === 'sub_business' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($119.99)'}
+                </button>
+              </div>
+
+              {/* 5. Enterprise ($299.99) */}
+              <div className="pricing-card" style={{ borderColor: 'rgba(168, 85, 247, 0.4)', background: 'linear-gradient(180deg, rgba(30, 27, 75, 0.6) 0%, rgba(15, 23, 42, 0.9) 100%)' }}>
+                <div className="featured-pill" style={{ background: '#9333ea' }}>ENTERPRISE</div>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Enterprise</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Dedicated gateway cluster + $150/mo API credits.</p>
+
+                <div className="plan-price" style={{ color: '#c084fc' }}>
+                  ${billingCycle === 'monthly' ? '299.99' : '249.99'}
+                  <span className="plan-price-period">/ mo</span>
+                </div>
+
+                <ul className="plan-features-list">
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 200,000,000 token quota</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $150/mo included API credits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 50,000 RPM rate limit</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 99.99% SLA & Dedicated Slack</li>
+                </ul>
+
+                <button 
+                  onClick={() => handleCheckoutSubscription('enterprise')}
+                  disabled={loadingAction === 'sub_enterprise'}
+                  className="btn btn-primary btn-block"
+                  style={{ background: '#9333ea', borderColor: '#a855f7' }}
+                >
+                  {loadingAction === 'sub_enterprise' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($299.99)'}
                 </button>
               </div>
             </div>
