@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 dotenv.config();
@@ -17,6 +18,7 @@ const DEEPSEEK_DISTRIBUTION_KEY = process.env.DEEPSEEK_DISTRIBUTION_KEY || DEEPS
 const DEEPSEEK_BASE_URL = process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com';
 const FREE_TIER_TOKEN_LIMIT = Number(process.env.FREE_TIER_TOKEN_LIMIT) || 50000;
 const MARKUP_MULTIPLIER = Number(process.env.MARKUP_MULTIPLIER) || 2.0;
+const MAX_FREE_ACCOUNTS_PER_IP = 1;
 
 // Initialize Stripe Client with latest API Version
 const stripeApiKey = process.env.STRIPE_SECRET_KEY || 'sk_test_placeholder_key';
@@ -27,6 +29,49 @@ const stripe = new Stripe(stripeApiKey, {
 const app = express();
 
 // Interfaces
+interface UserAccount {
+  id: string;
+  email: string;
+  passwordHash?: string;
+  name: string;
+  avatarUrl?: string;
+  authProvider: 'email' | 'google';
+  createdAt: string;
+  lastLoginAt: string;
+  registrationIp: string;
+  lastIp: string;
+  creditBalance: number;
+  currency: string;
+  plan: 'free' | 'starter' | 'pro' | 'enterprise';
+  planName: string;
+  planStatus: 'active' | 'past_due' | 'canceled';
+  monthlyQuota: number;
+  monthlyUsage: number;
+  freeTierLimit: number;
+  renewalDate: string;
+  isFlaggedForMultiAccount: boolean;
+  multiAccountCount: number;
+}
+
+interface IpRecord {
+  ip: string;
+  firstSeen: string;
+  lastSeen: string;
+  accountIds: string[];
+  totalFreeTokensConsumed: number;
+  isFlagged: boolean;
+  riskScore: number; // 0 to 100
+}
+
+interface SessionRecord {
+  token: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+  ip: string;
+  userAgent: string;
+}
+
 interface ApiLogEntry {
   id: string;
   timestamp: string;
@@ -43,23 +88,9 @@ interface ApiLogEntry {
   ip: string;
 }
 
-interface UserProfile {
-  id: string;
-  email: string;
-  name: string;
-  creditBalance: number;
-  currency: string;
-  plan: 'free' | 'starter' | 'pro' | 'enterprise';
-  planName: string;
-  planStatus: 'active' | 'past_due' | 'canceled';
-  monthlyQuota: number;
-  monthlyUsage: number;
-  freeTierLimit: number;
-  renewalDate: string;
-}
-
 interface ApiKeyRecord {
   id: string;
+  userId: string;
   name: string;
   prefix: string;
   fullKey?: string;
@@ -74,24 +105,65 @@ interface ApiKeyRecord {
 
 // In-Memory Database
 const db = {
-  user: {
-    id: 'usr_live_8912',
-    email: 'user@example.com',
-    name: 'Platform Developer',
-    creditBalance: 124.50,
-    currency: 'USD',
-    plan: 'pro' as const,
-    planName: 'Pro Platform Plan',
-    planStatus: 'active' as const,
-    monthlyQuota: 10000000,
-    monthlyUsage: 4821900,
-    freeTierLimit: FREE_TIER_TOKEN_LIMIT,
-    renewalDate: '2026-09-01T00:00:00Z',
-  } as UserProfile,
+  users: [
+    {
+      id: 'usr_live_8912',
+      email: 'user@example.com',
+      passwordHash: crypto.createHash('sha256').update('password123').digest('hex'),
+      name: 'Adam Jeannot',
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=128&auto=format&fit=crop&q=80',
+      authProvider: 'email' as const,
+      createdAt: '2026-08-01T00:00:00Z',
+      lastLoginAt: new Date().toISOString(),
+      registrationIp: '127.0.0.1',
+      lastIp: '127.0.0.1',
+      creditBalance: 124.50,
+      currency: 'USD',
+      plan: 'pro' as const,
+      planName: 'Pro Platform Plan',
+      planStatus: 'active' as const,
+      monthlyQuota: 10000000,
+      monthlyUsage: 4821900,
+      freeTierLimit: FREE_TIER_TOKEN_LIMIT,
+      renewalDate: '2026-09-01T00:00:00Z',
+      isFlaggedForMultiAccount: false,
+      multiAccountCount: 1,
+    } as UserAccount,
+  ],
+
+  ipRecords: new Map<string, IpRecord>([
+    [
+      '127.0.0.1',
+      {
+        ip: '127.0.0.1',
+        firstSeen: '2026-08-01T00:00:00Z',
+        lastSeen: new Date().toISOString(),
+        accountIds: ['usr_live_8912'],
+        totalFreeTokensConsumed: 12400,
+        isFlagged: false,
+        riskScore: 5,
+      },
+    ],
+  ]),
+
+  sessions: new Map<string, SessionRecord>([
+    [
+      'sess_master_dev_token',
+      {
+        token: 'sess_master_dev_token',
+        userId: 'usr_live_8912',
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+        ip: '127.0.0.1',
+        userAgent: 'Keepseed Client Console',
+      },
+    ],
+  ]),
 
   apiKeys: [
     {
       id: 'key_1',
+      userId: 'usr_live_8912',
       name: 'Production Server Backend',
       prefix: 'kp_live_9f81...4d2e',
       fullKey: 'kp_live_9f818a7c29014d2e',
@@ -105,6 +177,7 @@ const db = {
     },
     {
       id: 'key_2',
+      userId: 'usr_live_8912',
       name: 'Dev Agent Local',
       prefix: 'kp_test_3a12...89bc',
       fullKey: 'kp_test_3a127f55e09289bc',
@@ -118,6 +191,7 @@ const db = {
     },
     {
       id: 'key_3',
+      userId: 'usr_live_8912',
       name: 'Analytics Read-Only',
       prefix: 'kp_live_0b77...11a9',
       fullKey: 'kp_live_0b77c38910a211a9',
@@ -137,7 +211,7 @@ const db = {
       timestamp: new Date(Date.now() - 1000 * 60 * 2).toISOString(),
       method: 'POST',
       endpoint: '/v1/chat/completions',
-      model: 'keepseed-v4-pro',
+      model: 'deepseek-reasoner',
       upstreamModel: 'deepseek-reasoner',
       status: 200,
       latencyMs: 382,
@@ -152,7 +226,7 @@ const db = {
       timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
       method: 'POST',
       endpoint: '/v1/chat/completions',
-      model: 'keepseed-v4-instant',
+      model: 'deepseek-chat',
       upstreamModel: 'deepseek-chat',
       status: 200,
       latencyMs: 94,
@@ -186,6 +260,77 @@ const db = {
   ],
 };
 
+// Helper to extract clean client IP
+function getClientIp(req: Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  let ip = '';
+  if (typeof forwarded === 'string') {
+    ip = forwarded.split(',')[0].trim();
+  } else if (req.headers['x-real-ip'] && typeof req.headers['x-real-ip'] === 'string') {
+    ip = req.headers['x-real-ip'].trim();
+  } else {
+    ip = req.socket.remoteAddress || req.ip || '127.0.0.1';
+  }
+
+  // Clean IPv6 IPv4-mapped addresses
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.replace('::ffff:', '');
+  }
+  return ip || '127.0.0.1';
+}
+
+// Helper to record IP & detect multi-account abuse
+function recordIpActivity(ip: string, userId: string): { ipRecord: IpRecord; isMultiAccountAbuse: boolean } {
+  let record = db.ipRecords.get(ip);
+  const now = new Date().toISOString();
+
+  if (!record) {
+    record = {
+      ip,
+      firstSeen: now,
+      lastSeen: now,
+      accountIds: [userId],
+      totalFreeTokensConsumed: 0,
+      isFlagged: false,
+      riskScore: 0,
+    };
+    db.ipRecords.set(ip, record);
+    return { ipRecord: record, isMultiAccountAbuse: false };
+  }
+
+  record.lastSeen = now;
+  if (!record.accountIds.includes(userId)) {
+    record.accountIds.push(userId);
+  }
+
+  // Multi-account detection check
+  const isMultiAccountAbuse = record.accountIds.length > MAX_FREE_ACCOUNTS_PER_IP;
+  if (isMultiAccountAbuse) {
+    record.isFlagged = true;
+    record.riskScore = Math.min(100, record.accountIds.length * 35);
+  }
+
+  return { ipRecord: record, isMultiAccountAbuse };
+}
+
+// Session authentication resolver
+function resolveUserFromRequest(req: Request): UserAccount | null {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+  // 1. Session token lookup
+  if (token && token.startsWith('sess_')) {
+    const session = db.sessions.get(token);
+    if (session) {
+      const user = db.users.find((u) => u.id === session.userId);
+      if (user) return user;
+    }
+  }
+
+  // 2. Cookie / Default fallback user for platform testing
+  return db.users[0] || null;
+}
+
 // Rate Limiter & Concurrency Dethrottling Engine
 class RateLimiter {
   private requests: Map<string, number[]> = new Map();
@@ -212,7 +357,6 @@ const rateLimiter = new RateLimiter();
 // 2x DeepSeek Pricing Calculator
 function calculateTokenCost(model: string, promptTokens: number, completionTokens: number, multiplier = MARKUP_MULTIPLIER): { cost: number; wholesaleCost: number } {
   const isReasoner = model.includes('reasoner') || model.includes('pro');
-  // DeepSeek Wholesale: Chat ($0.27 / $1.10 per 1M), Reasoner ($0.55 / $2.19 per 1M)
   const inputRate = isReasoner ? 0.00000055 : 0.00000027;
   const outputRate = isReasoner ? 0.00000219 : 0.00000110;
 
@@ -264,18 +408,20 @@ app.post('/api/webhooks', express.raw({ type: 'application/json' }), async (req:
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  const primaryUser = db.users[0];
+
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object as Stripe.Checkout.Session;
-      if (session.mode === 'subscription') {
-        db.user.plan = 'pro';
-        db.user.planName = 'Pro Platform Plan';
-        db.user.planStatus = 'active';
-        db.user.monthlyQuota = 10000000;
-        console.log(`[Stripe Webhook] Activated Pro subscription: ${session.subscription}`);
-      } else if (session.mode === 'payment') {
+      if (session.mode === 'subscription' && primaryUser) {
+        primaryUser.plan = 'pro';
+        primaryUser.planName = 'Pro Platform Plan';
+        primaryUser.planStatus = 'active';
+        primaryUser.monthlyQuota = 10000000;
+        console.log(`[Stripe Webhook] Activated Pro subscription for user: ${primaryUser.email}`);
+      } else if (session.mode === 'payment' && primaryUser) {
         const amountTotal = (session.amount_total || 0) / 100;
-        db.user.creditBalance += amountTotal;
+        primaryUser.creditBalance += amountTotal;
         db.invoices.unshift({
           id: session.id || `ch_${Date.now()}`,
           date: new Date().toISOString().split('T')[0],
@@ -304,10 +450,12 @@ app.post('/api/webhooks', express.raw({ type: 'application/json' }), async (req:
       break;
     }
     case 'customer.subscription.deleted': {
-      db.user.plan = 'free';
-      db.user.planName = 'Free Tier';
-      db.user.planStatus = 'canceled';
-      db.user.monthlyQuota = FREE_TIER_TOKEN_LIMIT;
+      if (primaryUser) {
+        primaryUser.plan = 'free';
+        primaryUser.planName = 'Free Tier';
+        primaryUser.planStatus = 'canceled';
+        primaryUser.monthlyQuota = FREE_TIER_TOKEN_LIMIT;
+      }
       break;
     }
     default:
@@ -324,9 +472,266 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.static(distPath));
 
 /**
+ * =========================================================================
+ * AUTHENTICATION & MULTI-ACCOUNT IP DETECTION ENDPOINTS
+ * =========================================================================
+ */
+
+/**
+ * 1. Register with Email / Password (+ IP Multi-Account Detection)
+ */
+app.post('/api/auth/register', (req: Request, res: Response) => {
+  const { email, password, name = 'Platform User' } = req.body;
+  const clientIp = getClientIp(req);
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  const existing = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  if (existing) {
+    return res.status(409).json({ error: 'An account with this email address already exists.' });
+  }
+
+  const userId = `usr_${crypto.randomBytes(6).toString('hex')}`;
+  const { ipRecord, isMultiAccountAbuse } = recordIpActivity(clientIp, userId);
+
+  // If IP has multiple accounts, apply IP shared free token limits
+  const isFlagged = isMultiAccountAbuse;
+  const initialFreeUsage = isFlagged ? Math.min(FREE_TIER_TOKEN_LIMIT, ipRecord.totalFreeTokensConsumed) : 0;
+
+  const newUser: UserAccount = {
+    id: userId,
+    email: email.toLowerCase().trim(),
+    passwordHash: crypto.createHash('sha256').update(password).digest('hex'),
+    name: name.trim(),
+    avatarUrl: `https://api.dicebear.com/7.x/identicon/svg?seed=${email}`,
+    authProvider: 'email',
+    createdAt: new Date().toISOString(),
+    lastLoginAt: new Date().toISOString(),
+    registrationIp: clientIp,
+    lastIp: clientIp,
+    creditBalance: isFlagged ? 0.00 : 5.00, // $5 trial for verified clean IP, $0 if duplicate IP
+    currency: 'USD',
+    plan: 'free',
+    planName: 'Free Tier',
+    planStatus: 'active',
+    monthlyQuota: FREE_TIER_TOKEN_LIMIT,
+    monthlyUsage: initialFreeUsage,
+    freeTierLimit: FREE_TIER_TOKEN_LIMIT,
+    renewalDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    isFlaggedForMultiAccount: isFlagged,
+    multiAccountCount: ipRecord.accountIds.length,
+  };
+
+  db.users.push(newUser);
+
+  // Issue Session
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  db.sessions.set(sessionToken, {
+    token: sessionToken,
+    userId: newUser.id,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    ip: clientIp,
+    userAgent: req.headers['user-agent'] || 'Unknown',
+  });
+
+  res.json({
+    status: 'success',
+    token: sessionToken,
+    user: newUser,
+    ipStatus: {
+      clientIp,
+      isFlagged,
+      linkedAccountsCount: ipRecord.accountIds.length,
+      warning: isFlagged ? 'Multiple accounts detected from your IP address. Free token allowance is bound to your network origin.' : null,
+    },
+  });
+});
+
+/**
+ * 2. Login with Email / Password
+ */
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  const { email, password } = req.body;
+  const clientIp = getClientIp(req);
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+
+  const user = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const hash = crypto.createHash('sha256').update(password).digest('hex');
+
+  if (!user || user.passwordHash !== hash) {
+    return res.status(401).json({ error: 'Invalid email or password.' });
+  }
+
+  user.lastLoginAt = new Date().toISOString();
+  user.lastIp = clientIp;
+  recordIpActivity(clientIp, user.id);
+
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  db.sessions.set(sessionToken, {
+    token: sessionToken,
+    userId: user.id,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    ip: clientIp,
+    userAgent: req.headers['user-agent'] || 'Unknown',
+  });
+
+  res.json({
+    status: 'success',
+    token: sessionToken,
+    user,
+  });
+});
+
+/**
+ * 3. Google OAuth Login / Register Flow
+ */
+app.post('/api/auth/google', (req: Request, res: Response) => {
+  const { email, name, avatarUrl } = req.body;
+  const clientIp = getClientIp(req);
+
+  if (!email) {
+    return res.status(400).json({ error: 'Google email identity is required.' });
+  }
+
+  let user = db.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  const { ipRecord, isMultiAccountAbuse } = recordIpActivity(clientIp, user ? user.id : 'pending');
+
+  if (!user) {
+    const userId = `usr_g_${crypto.randomBytes(6).toString('hex')}`;
+    const isFlagged = isMultiAccountAbuse;
+
+    user = {
+      id: userId,
+      email: email.toLowerCase().trim(),
+      name: name || 'Google Verified User',
+      avatarUrl: avatarUrl || `https://api.dicebear.com/7.x/identicon/svg?seed=${email}`,
+      authProvider: 'google',
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      registrationIp: clientIp,
+      lastIp: clientIp,
+      creditBalance: isFlagged ? 0.00 : 5.00,
+      currency: 'USD',
+      plan: 'free',
+      planName: 'Free Tier',
+      planStatus: 'active',
+      monthlyQuota: FREE_TIER_TOKEN_LIMIT,
+      monthlyUsage: isFlagged ? Math.min(FREE_TIER_TOKEN_LIMIT, ipRecord.totalFreeTokensConsumed) : 0,
+      freeTierLimit: FREE_TIER_TOKEN_LIMIT,
+      renewalDate: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+      isFlaggedForMultiAccount: isFlagged,
+      multiAccountCount: ipRecord.accountIds.length,
+    };
+    db.users.push(user);
+    if (!ipRecord.accountIds.includes(userId)) ipRecord.accountIds.push(userId);
+  } else {
+    user.lastLoginAt = new Date().toISOString();
+    user.lastIp = clientIp;
+  }
+
+  const sessionToken = `sess_${crypto.randomBytes(24).toString('hex')}`;
+  db.sessions.set(sessionToken, {
+    token: sessionToken,
+    userId: user.id,
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString(),
+    ip: clientIp,
+    userAgent: req.headers['user-agent'] || 'Unknown',
+  });
+
+  res.json({
+    status: 'success',
+    token: sessionToken,
+    user,
+    ipStatus: {
+      clientIp,
+      isFlagged: user.isFlaggedForMultiAccount,
+      linkedAccountsCount: ipRecord.accountIds.length,
+    },
+  });
+});
+
+/**
+ * 4. Get Current Auth User & IP Security Status
+ */
+app.get('/api/auth/me', (req: Request, res: Response) => {
+  const user = resolveUserFromRequest(req);
+  const clientIp = getClientIp(req);
+  const ipRecord = db.ipRecords.get(clientIp) || {
+    ip: clientIp,
+    firstSeen: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+    accountIds: [user?.id || 'usr_live_8912'],
+    totalFreeTokensConsumed: 0,
+    isFlagged: false,
+    riskScore: 0,
+  };
+
+  if (!user) {
+    return res.status(401).json({ error: 'Unauthenticated' });
+  }
+
+  res.json({
+    user,
+    ipSecurity: {
+      clientIp,
+      isFlagged: ipRecord.isFlagged,
+      linkedAccountsCount: ipRecord.accountIds.length,
+      riskScore: ipRecord.riskScore,
+    },
+  });
+});
+
+/**
+ * 5. Logout
+ */
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  const authHeader = req.headers['authorization'] || '';
+  const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (token) {
+    db.sessions.delete(token);
+  }
+  res.json({ success: true });
+});
+
+/**
+ * 6. IP Security & Multi-Account Detection Status Report
+ */
+app.get('/api/security/ip-status', (req: Request, res: Response) => {
+  const clientIp = getClientIp(req);
+  const record = db.ipRecords.get(clientIp) || {
+    ip: clientIp,
+    firstSeen: new Date().toISOString(),
+    lastSeen: new Date().toISOString(),
+    accountIds: [],
+    totalFreeTokensConsumed: 0,
+    isFlagged: false,
+    riskScore: 0,
+  };
+
+  res.json({
+    detectedIp: clientIp,
+    isFlagged: record.isFlagged,
+    linkedAccountsCount: record.accountIds.length,
+    maxFreeAllowed: MAX_FREE_ACCOUNTS_PER_IP,
+    riskScore: record.riskScore,
+    riskLevel: record.riskScore > 60 ? 'HIGH' : record.riskScore > 20 ? 'MEDIUM' : 'LOW',
+    protectionMode: 'IP Shared Token Ceiling & Deduplication Active',
+  });
+});
+
+/**
  * Health check endpoint for Render & monitoring systems
  */
-app.get('/api/health', (_req: Request, res: Response) => {
+app.get('/api/health', (req: Request, res: Response) => {
+  const clientIp = getClientIp(req);
   res.json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -336,15 +741,17 @@ app.get('/api/health', (_req: Request, res: Response) => {
     deepseekMasterKeySet: Boolean(DEEPSEEK_CHAT_KEY && !DEEPSEEK_CHAT_KEY.includes('placeholder')),
     markupMultiplier: MARKUP_MULTIPLIER,
     freeTierLimit: FREE_TIER_TOKEN_LIMIT,
-    activeKeysCount: db.apiKeys.filter((k) => k.status === 'Active').length,
-    userBalance: db.user.creditBalance,
+    clientIp,
+    totalRegisteredUsers: db.users.length,
+    totalTrackedIps: db.ipRecords.size,
   });
 });
 
 /**
  * Public configuration endpoint for frontend initialization
  */
-app.get('/api/config', (_req: Request, res: Response) => {
+app.get('/api/config', (req: Request, res: Response) => {
+  const clientIp = getClientIp(req);
   res.json({
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     accountId: process.env.STRIPE_ACCOUNT_ID || '',
@@ -357,24 +764,29 @@ app.get('/api/config', (_req: Request, res: Response) => {
     markupMultiplier: MARKUP_MULTIPLIER,
     freeTierLimit: FREE_TIER_TOKEN_LIMIT,
     deepseekEnabled: true,
+    clientIp,
   });
 });
 
 /**
  * User Profile & State Endpoint
  */
-app.get('/api/user/profile', (_req: Request, res: Response) => {
-  res.json(db.user);
+app.get('/api/user/profile', (req: Request, res: Response) => {
+  const user = resolveUserFromRequest(req);
+  res.json(user || db.users[0]);
 });
 
 /**
  * API Keys CRUD Endpoints
  */
-app.get('/api/user/keys', (_req: Request, res: Response) => {
-  res.json(db.apiKeys);
+app.get('/api/user/keys', (req: Request, res: Response) => {
+  const user = resolveUserFromRequest(req);
+  const userKeys = db.apiKeys.filter((k) => !k.userId || (user && k.userId === user.id));
+  res.json(userKeys);
 });
 
 app.post('/api/user/keys', (req: Request, res: Response) => {
+  const user = resolveUserFromRequest(req);
   const { name, permissions = 'Full Access', rateLimitRpm = 5000 } = req.body;
   if (!name) {
     return res.status(400).json({ error: 'Key name is required' });
@@ -386,6 +798,7 @@ app.post('/api/user/keys', (req: Request, res: Response) => {
 
   const newKeyRecord: ApiKeyRecord = {
     id: `key_${Date.now()}`,
+    userId: user ? user.id : 'usr_live_8912',
     name: name.trim(),
     prefix,
     fullKey,
@@ -443,42 +856,36 @@ app.get(['/v1/models', '/api/models'], (_req: Request, res: Response) => {
     object: 'list',
     data: [
       {
-        id: 'keepseed-v4-instant',
-        object: 'model',
-        created: 1723000000,
-        owned_by: 'keepseed',
-        upstream: 'deepseek-chat (DeepSeek-V3)',
-        pricing: {
-          input_per_million: 0.54, // 2x markup on $0.27
-          output_per_million: 2.20, // 2x markup on $1.10
-        },
-        description: 'DeepSeek-V3 high-throughput chat model with ultra-low latency & 2x platform billing.',
-      },
-      {
-        id: 'keepseed-v4-pro',
-        object: 'model',
-        created: 1723000000,
-        owned_by: 'keepseed',
-        upstream: 'deepseek-reasoner (DeepSeek-R1)',
-        pricing: {
-          input_per_million: 1.10, // 2x markup on $0.55
-          output_per_million: 4.38, // 2x markup on $2.19
-        },
-        description: 'DeepSeek-R1 cognitive reasoning model with Chain-of-Thought deliberation & 2x platform billing.',
-      },
-      {
         id: 'deepseek-chat',
         object: 'model',
         created: 1723000000,
         owned_by: 'deepseek',
-        upstream: 'deepseek-chat',
+        upstream: 'deepseek-chat (DeepSeek-V3)',
         pricing: { input_per_million: 0.54, output_per_million: 2.20 },
+        description: 'DeepSeek-V3 high-throughput chat model with 2x platform wholesale rate.',
       },
       {
         id: 'deepseek-reasoner',
         object: 'model',
         created: 1723000000,
         owned_by: 'deepseek',
+        upstream: 'deepseek-reasoner (DeepSeek-R1)',
+        pricing: { input_per_million: 1.10, output_per_million: 4.38 },
+        description: 'DeepSeek-R1 cognitive reasoning model with Chain-of-Thought reasoning & 2x platform rate.',
+      },
+      {
+        id: 'keepseed-v4-instant',
+        object: 'model',
+        created: 1723000000,
+        owned_by: 'keepseed',
+        upstream: 'deepseek-chat',
+        pricing: { input_per_million: 0.54, output_per_million: 2.20 },
+      },
+      {
+        id: 'keepseed-v4-pro',
+        object: 'model',
+        created: 1723000000,
+        owned_by: 'keepseed',
         upstream: 'deepseek-reasoner',
         pricing: { input_per_million: 1.10, output_per_million: 4.38 },
       },
@@ -488,15 +895,11 @@ app.get(['/v1/models', '/api/models'], (_req: Request, res: Response) => {
 
 /**
  * DeepSeek Gateway & Sub-Key Proxy (/v1/chat/completions)
- * Features:
- * - Master key upstream authentication with DeepSeek API
- * - Sub-key validation & per-key rate limiting / dethrottling
- * - Free tier token enforcement (stops after 50,000 tokens)
- * - 2x token price calculation & credit balance deduction
- * - Real Server-Sent Events (SSE) streaming
  */
 app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request, res: Response) => {
   const startTime = Date.now();
+  const clientIp = getClientIp(req);
+  const activeUser = resolveUserFromRequest(req);
 
   // 1. Authenticate Request
   const authHeader = req.headers['authorization'] || '';
@@ -505,17 +908,14 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
   let isInternalChat = false;
   let matchingKeyRecord: ApiKeyRecord | undefined;
 
-  if (!token || token === 'internal_ui_session') {
-    // Internal platform dashboard session (uses master DEEPSEEK_CHAT_KEY)
+  if (!token || token === 'internal_ui_session' || token.startsWith('sess_')) {
     isInternalChat = true;
   } else {
-    // External sub-key authentication (uses master DEEPSEEK_DISTRIBUTION_KEY)
     matchingKeyRecord = db.apiKeys.find(
       (k) => (k.fullKey && k.fullKey === token) || token.startsWith(k.prefix.split('...')[0])
     );
 
     if (!matchingKeyRecord) {
-      // Fallback matching for demo keys
       matchingKeyRecord = db.apiKeys.find((k) => k.status === 'Active');
     }
 
@@ -532,7 +932,7 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
 
   // 2. Enforce Rate Limiting & Dethrottling
   const rateLimitRpm = matchingKeyRecord ? matchingKeyRecord.rateLimitRpm : 10000;
-  const limiterId = matchingKeyRecord ? matchingKeyRecord.id : 'internal_ui';
+  const limiterId = matchingKeyRecord ? matchingKeyRecord.id : `ip_${clientIp}`;
   const limitStatus = rateLimiter.check(limiterId, rateLimitRpm);
 
   res.setHeader('X-RateLimit-Limit-RPM', rateLimitRpm);
@@ -540,7 +940,6 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
 
   if (!limitStatus.allowed) {
     if (limitStatus.retryAfterMs <= 1500) {
-      // Dethrottling: short delay before proceeding
       await new Promise((r) => setTimeout(r, limitStatus.retryAfterMs));
     } else {
       res.setHeader('Retry-After', Math.ceil(limitStatus.retryAfterMs / 1000));
@@ -554,18 +953,24 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
     }
   }
 
-  // 3. Enforce Free Tier Limit & Balance Checks
-  if (db.user.plan === 'free' && db.user.monthlyUsage >= db.user.freeTierLimit) {
-    return res.status(402).json({
-      error: {
-        message: `Free tier token ceiling of ${db.user.freeTierLimit.toLocaleString()} tokens reached. Please top up prepaid credits or upgrade to Pro to resume API consumption.`,
-        type: 'insufficient_quota',
-        code: 'free_tier_exhausted',
-      },
-    });
+  // 3. Enforce Free Tier Limit & IP Multi-Account Token Ceiling
+  const user = activeUser || db.users[0];
+  const ipRecord = db.ipRecords.get(clientIp);
+
+  if (user.plan === 'free') {
+    const isExceeded = user.monthlyUsage >= user.freeTierLimit || (ipRecord && ipRecord.totalFreeTokensConsumed >= user.freeTierLimit);
+    if (isExceeded) {
+      return res.status(402).json({
+        error: {
+          message: `Free tier token ceiling of ${user.freeTierLimit.toLocaleString()} tokens reached for your account/IP network. Please top up prepaid credits or upgrade to Pro to resume API consumption.`,
+          type: 'insufficient_quota',
+          code: 'free_tier_exhausted',
+        },
+      });
+    }
   }
 
-  if (db.user.plan !== 'free' && db.user.creditBalance <= 0 && db.user.monthlyUsage >= db.user.monthlyQuota) {
+  if (user.plan !== 'free' && user.creditBalance <= 0 && user.monthlyUsage >= user.monthlyQuota) {
     return res.status(402).json({
       error: {
         message: 'Prepaid credit balance depleted ($0.00). Please add funds in the Top Up tab.',
@@ -577,7 +982,7 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
 
   // 4. Map Model to DeepSeek Model
   const {
-    model = 'keepseed-v4-instant',
+    model = 'deepseek-chat',
     messages = [],
     stream = false,
     temperature = 0.7,
@@ -586,14 +991,13 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
   } = req.body;
 
   let upstreamModel = 'deepseek-chat';
-  if (model === 'keepseed-v4-pro' || model.includes('reasoner') || model.includes('r1')) {
+  if (model === 'deepseek-reasoner' || model === 'keepseed-v4-pro' || model.includes('reasoner') || model.includes('r1')) {
     upstreamModel = 'deepseek-reasoner';
   }
 
   const activeMasterKey = isInternalChat ? DEEPSEEK_CHAT_KEY : DEEPSEEK_DISTRIBUTION_KEY;
 
   try {
-    // 5. Dispatch Request to DeepSeek API
     const deepseekResponse = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
       method: 'POST',
       headers: {
@@ -616,7 +1020,6 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
       throw new Error(`DeepSeek API response: ${errText || deepseekResponse.statusText}`);
     }
 
-    // 6. Handle Streaming vs Non-Streaming
     if (stream && deepseekResponse.body) {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -639,15 +1042,17 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
       } finally {
         res.end();
 
-        // Calculate Usage & 2x Markup
         const promptTokens = Math.max(15, Math.round(JSON.stringify(messages).length / 4));
         const completionTokens = Math.max(25, Math.round(totalGeneratedText.length / 4));
         const totalTokens = promptTokens + completionTokens;
         const { cost, wholesaleCost } = calculateTokenCost(upstreamModel, promptTokens, completionTokens);
 
-        // Update state
-        db.user.monthlyUsage += totalTokens;
-        db.user.creditBalance = Math.max(0, Number((db.user.creditBalance - cost).toFixed(6)));
+        user.monthlyUsage += totalTokens;
+        user.creditBalance = Math.max(0, Number((user.creditBalance - cost).toFixed(6)));
+
+        if (ipRecord) {
+          ipRecord.totalFreeTokensConsumed += totalTokens;
+        }
 
         if (matchingKeyRecord) {
           matchingKeyRecord.tokensConsumed += totalTokens;
@@ -668,7 +1073,7 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
           cost,
           wholesaleCost,
           apiKeyPrefix: matchingKeyRecord ? matchingKeyRecord.prefix.split('...')[0] : 'kp_master_ui',
-          ip: req.ip || '127.0.0.1',
+          ip: clientIp,
         });
         if (db.logs.length > 100) db.logs.pop();
       }
@@ -676,16 +1081,18 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
       return;
     }
 
-    // Non-Streaming Response
     const data: any = await deepseekResponse.json();
     const promptTokens = data.usage?.prompt_tokens || Math.round(JSON.stringify(messages).length / 4);
     const completionTokens = data.usage?.completion_tokens || Math.round(JSON.stringify(data.choices).length / 4);
     const totalTokens = promptTokens + completionTokens;
     const { cost, wholesaleCost } = calculateTokenCost(upstreamModel, promptTokens, completionTokens);
 
-    // Update state
-    db.user.monthlyUsage += totalTokens;
-    db.user.creditBalance = Math.max(0, Number((db.user.creditBalance - cost).toFixed(6)));
+    user.monthlyUsage += totalTokens;
+    user.creditBalance = Math.max(0, Number((user.creditBalance - cost).toFixed(6)));
+
+    if (ipRecord) {
+      ipRecord.totalFreeTokensConsumed += totalTokens;
+    }
 
     if (matchingKeyRecord) {
       matchingKeyRecord.tokensConsumed += totalTokens;
@@ -706,7 +1113,7 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
       cost,
       wholesaleCost,
       apiKeyPrefix: matchingKeyRecord ? matchingKeyRecord.prefix.split('...')[0] : 'kp_master_ui',
-      ip: req.ip || '127.0.0.1',
+      ip: clientIp,
     });
     if (db.logs.length > 100) db.logs.pop();
 
@@ -714,9 +1121,8 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
   } catch (proxyError: any) {
     console.error('DeepSeek Proxy Error:', proxyError.message);
 
-    // High-Fidelity Simulation Fallback if network/upstream is temporarily unreachable
     const fallbackText = upstreamModel === 'deepseek-reasoner'
-      ? `[DeepSeek-R1]: Reasoning initialized.\n\nChain of thought:\n1. Problem Analysis: Deconstructed user query.\n2. Synthesis: Formulated comprehensive resolution under high cognitive accuracy.\n\nResolution: System architecture verified with low latency.`
+      ? `[DeepSeek-R1]: Reasoning initialized.\n\nChain of thought:\n1. Deconstructed input prompt.\n2. Executed multi-step validation.\n\nResolution: DeepSeek gateway response generated under 2x pricing policy.`
       : `[DeepSeek-V3]: Response generated successfully for: "${messages.slice(-1)[0]?.content || 'Prompt'}".`;
 
     const promptTokens = Math.max(20, Math.round(JSON.stringify(messages).length / 4));
@@ -724,8 +1130,12 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
     const totalTokens = promptTokens + completionTokens;
     const { cost, wholesaleCost } = calculateTokenCost(upstreamModel, promptTokens, completionTokens);
 
-    db.user.monthlyUsage += totalTokens;
-    db.user.creditBalance = Math.max(0, Number((db.user.creditBalance - cost).toFixed(6)));
+    user.monthlyUsage += totalTokens;
+    user.creditBalance = Math.max(0, Number((user.creditBalance - cost).toFixed(6)));
+
+    if (ipRecord) {
+      ipRecord.totalFreeTokensConsumed += totalTokens;
+    }
 
     if (matchingKeyRecord) {
       matchingKeyRecord.tokensConsumed += totalTokens;
@@ -746,7 +1156,7 @@ app.post(['/v1/chat/completions', '/api/chat/completions'], async (req: Request,
       cost,
       wholesaleCost,
       apiKeyPrefix: matchingKeyRecord ? matchingKeyRecord.prefix.split('...')[0] : 'kp_master_ui',
-      ip: req.ip || '127.0.0.1',
+      ip: clientIp,
     });
 
     if (stream) {
@@ -817,14 +1227,16 @@ app.get('/api/checkout-session/:sessionId', async (req: Request, res: Response) 
  */
 app.post('/api/create-subscription-checkout', async (req: Request, res: Response) => {
   try {
+    const user = resolveUserFromRequest(req);
     const { priceId, customerEmail, customerId } = req.body;
     const baseUrl = getBaseUrl(req);
     const targetPrice = priceId || process.env.PRICE_STARTER_MONTHLY || 'price_1U5VUcDy28wjEXYsN7AwEJMb';
+    const emailToUse = customerEmail || (user ? user.email : 'user@example.com');
 
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
       customer: customerId || undefined,
-      customer_email: !customerId ? customerEmail : undefined,
+      customer_email: !customerId ? emailToUse : undefined,
       line_items: [
         {
           price: targetPrice,
@@ -849,8 +1261,10 @@ app.post('/api/create-subscription-checkout', async (req: Request, res: Response
  */
 app.post('/api/create-topup-checkout', async (req: Request, res: Response) => {
   try {
+    const user = resolveUserFromRequest(req);
     const { amount, currency = 'usd', customerEmail, customerId } = req.body;
     const numAmount = Number(amount);
+    const emailToUse = customerEmail || (user ? user.email : 'user@example.com');
 
     if (isNaN(numAmount) || numAmount < 1) {
       return res.status(400).json({ error: 'Top-up amount must be at least 1 unit of currency.' });
@@ -861,7 +1275,7 @@ app.post('/api/create-topup-checkout', async (req: Request, res: Response) => {
     const session = await stripe.checkout.sessions.create({
       mode: 'payment',
       customer: customerId || undefined,
-      customer_email: !customerId ? customerEmail : undefined,
+      customer_email: !customerId ? emailToUse : undefined,
       line_items: [
         {
           price_data: {
@@ -936,21 +1350,22 @@ app.post('/api/v1/topup', async (req: Request, res: Response) => {
  */
 app.post('/api/create-portal-session', async (req: Request, res: Response) => {
   try {
+    const user = resolveUserFromRequest(req);
     const { customerId, customerEmail } = req.body;
     const baseUrl = getBaseUrl(req);
+    const emailToUse = customerEmail || (user ? user.email : 'user@example.com');
 
     let targetCustomerId = customerId;
 
     if (!targetCustomerId || targetCustomerId === 'cus_demo_id') {
-      const email = customerEmail || 'user@example.com';
       try {
-        const existing = await stripe.customers.list({ email, limit: 1 });
+        const existing = await stripe.customers.list({ email: emailToUse, limit: 1 });
         if (existing.data.length > 0) {
           targetCustomerId = existing.data[0].id;
         } else {
           const created = await stripe.customers.create({
-            email,
-            name: 'Demo Platform User',
+            email: emailToUse,
+            name: user ? user.name : 'Platform User',
             metadata: { source: 'keepseed-ai-platform' },
           });
           targetCustomerId = created.id;
@@ -987,5 +1402,5 @@ app.get('*splat', (req: Request, res: Response) => {
 
 const PORT = Number(process.env.PORT) || 3001;
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Keepseed DeepSeek Gateway] Running on port ${PORT} (2x Markup: Active, Master Keys: Configured)`);
+  console.log(`[Keepseed Security Gateway] Running on port ${PORT} (Google/Email Auth & IP Multi-Account Shield Active)`);
 });
