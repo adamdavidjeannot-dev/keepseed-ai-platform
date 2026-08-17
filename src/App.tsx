@@ -193,7 +193,7 @@ export default function App() {
   const [selectedCurrency, setSelectedCurrency] = useState<'USD' | 'CNY'>('USD');
   const [amount, setAmount] = useState<number>(20);
   const [customAmountInput, setCustomAmountInput] = useState<string>('20');
-  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'gpay' | 'card'>('stripe');
+  const [paymentMethod, setPaymentMethod] = useState<'stripe' | 'paypal' | 'gpay' | 'card'>('stripe');
 
   // Pricing Interval State
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly');
@@ -287,6 +287,31 @@ export default function App() {
       setActiveTab(pathname);
     }
 
+    const paypalSuccess = query.get('paypal_success');
+    const paypalToken = query.get('token');
+
+    if (paypalSuccess === 'true' && paypalToken) {
+      fetch('/api/paypal/capture-order', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ orderId: paypalToken }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.status === 'COMPLETED') {
+            setNotification({
+              type: 'success',
+              message: `PayPal payment successful! Order ${data.orderId} captured. Balance updated to $${data.userBalance.toFixed(2)}.`,
+            });
+          }
+          refreshUserData();
+        })
+        .catch((err) => {
+          setNotification({ type: 'error', message: `PayPal capture error: ${err.message}` });
+        });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     if (isSuccess === 'true') {
       if (sessionId) {
         fetch(`/api/checkout-session/${sessionId}`)
@@ -315,7 +340,7 @@ export default function App() {
 
       window.history.replaceState({}, document.title, window.location.pathname);
     }
-  }, [sessionToken, refreshUserData]);
+  }, [sessionToken, refreshUserData, getAuthHeaders]);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -540,6 +565,13 @@ export default function App() {
   };
 
   const handleCheckoutTopUp = async () => {
+    if (paymentMethod === 'paypal') {
+      return handlePayPalTopUp();
+    }
+    if (paymentMethod === 'gpay') {
+      return handleGooglePayTopUp();
+    }
+
     try {
       setLoadingAction('topup');
       const res = await fetch('/api/create-topup-checkout', {
@@ -564,6 +596,110 @@ export default function App() {
       setNotification({
         type: 'error',
         message: `Top-Up Checkout error: ${err.message || 'Network connection failed'}`
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handlePayPalTopUp = async () => {
+    try {
+      setLoadingAction('paypal_topup');
+      const res = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          amount: Number(calculateTotal(amount)),
+          currency: selectedCurrency,
+          description: `Keepseed AI Prepaid Recharge ($${amount.toFixed(2)})`,
+        }),
+      });
+      const data = await res.json();
+      if (data.approveUrl) {
+        window.location.href = data.approveUrl;
+      } else {
+        setNotification({
+          type: 'error',
+          message: data.error || 'Failed to initiate PayPal Checkout.',
+        });
+      }
+    } catch (err: any) {
+      setNotification({
+        type: 'error',
+        message: `PayPal Error: ${err.message || 'Network connection failed'}`,
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleGooglePayTopUp = async () => {
+    try {
+      setLoadingAction('gpay_topup');
+      // Create and capture order via PayPal / Google Pay gateway
+      const createRes = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          amount: Number(calculateTotal(amount)),
+          currency: selectedCurrency,
+          description: `Google Pay (via PayPal) Recharge ($${amount.toFixed(2)})`,
+        }),
+      });
+      const createData = await createRes.json();
+      if (!createData.orderId) throw new Error(createData.error || 'Google Pay order creation failed');
+
+      const captureRes = await fetch('/api/paypal/capture-order', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ orderId: createData.orderId }),
+      });
+      const captureData = await captureRes.json();
+      if (captureData.status === 'COMPLETED') {
+        setNotification({
+          type: 'success',
+          message: `Google Pay transaction successful! Captured order: ${captureData.orderId}. Added $${captureData.amount.toFixed(2)} to credit balance.`,
+        });
+        refreshUserData();
+      } else {
+        throw new Error(captureData.error || 'Google Pay capture failed');
+      }
+    } catch (err: any) {
+      setNotification({
+        type: 'error',
+        message: `Google Pay Error: ${err.message || 'Payment processing failed'}`,
+      });
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handlePayPalSubscription = async (planKey: string, planAmount: number) => {
+    try {
+      setLoadingAction(`sub_pp_${planKey}`);
+      const res = await fetch('/api/paypal/create-order', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          amount: planAmount,
+          currency: 'USD',
+          planKey,
+          description: `Keepseed AI Platform Subscription (${planKey.toUpperCase()})`,
+        }),
+      });
+      const data = await res.json();
+      if (data.approveUrl) {
+        window.location.href = data.approveUrl;
+      } else {
+        setNotification({
+          type: 'error',
+          message: data.error || 'Failed to initiate PayPal Checkout.',
+        });
+      }
+    } catch (err: any) {
+      setNotification({
+        type: 'error',
+        message: `PayPal Error: ${err.message || 'Network connection failed'}`,
       });
     } finally {
       setLoadingAction(null);
@@ -1827,9 +1963,10 @@ func main() {
 
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
-                Payment Method
+                Select Payment Method
               </label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                {/* 1. Stripe */}
                 <div 
                   onClick={() => setPaymentMethod('stripe')}
                   style={{
@@ -1843,25 +1980,87 @@ func main() {
                     cursor: 'pointer'
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
                     <CreditCard size={18} color="#60a5fa" />
-                    <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Stripe Dynamic Checkout (Cards, Google Pay, Apple Pay, Link)</span>
+                    <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Stripe Dynamic Checkout (Credit Cards, Apple Pay, Link)</span>
                   </div>
                   <input type="radio" checked={paymentMethod === 'stripe'} readOnly />
+                </div>
+
+                {/* 2. PayPal */}
+                <div 
+                  onClick={() => setPaymentMethod('paypal')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.875rem 1rem',
+                    borderRadius: '8px',
+                    border: `1px solid ${paymentMethod === 'paypal' ? '#0070ba' : 'var(--border-color)'}`,
+                    background: paymentMethod === 'paypal' ? 'rgba(0, 112, 186, 0.12)' : 'var(--bg-card)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                    <div style={{ width: '18px', height: '18px', borderRadius: '4px', background: '#003087', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#0070ba', fontWeight: 800, fontSize: '11px' }}>
+                      P
+                    </div>
+                    <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>PayPal Smart Checkout (Direct Balance, Bank, Cards)</span>
+                  </div>
+                  <input type="radio" checked={paymentMethod === 'paypal'} readOnly />
+                </div>
+
+                {/* 3. Google Pay (via PayPal & Stripe) */}
+                <div 
+                  onClick={() => setPaymentMethod('gpay')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '0.875rem 1rem',
+                    borderRadius: '8px',
+                    border: `1px solid ${paymentMethod === 'gpay' ? '#ea4335' : 'var(--border-color)'}`,
+                    background: paymentMethod === 'gpay' ? 'rgba(234, 67, 53, 0.1)' : 'var(--bg-card)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24">
+                      <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17z"/>
+                      <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+                      <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.98 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                      <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                    </svg>
+                    <span style={{ fontWeight: 500, fontSize: '0.875rem' }}>Google Pay (via PayPal & Stripe Instant Gateway)</span>
+                  </div>
+                  <input type="radio" checked={paymentMethod === 'gpay'} readOnly />
                 </div>
               </div>
             </div>
 
             <button 
               onClick={handleCheckoutTopUp}
-              disabled={loadingAction === 'topup'}
+              disabled={Boolean(loadingAction)}
               className="btn btn-primary btn-block"
-              style={{ padding: '0.875rem', fontSize: '1rem' }}
+              style={{
+                padding: '0.875rem',
+                fontSize: '1rem',
+                background: paymentMethod === 'paypal' ? '#0070ba' : paymentMethod === 'gpay' ? '#1f2937' : 'var(--accent-primary)',
+                borderColor: paymentMethod === 'paypal' ? '#003087' : paymentMethod === 'gpay' ? '#374151' : 'var(--accent-primary)',
+              }}
             >
-              {loadingAction === 'topup' ? (
+              {loadingAction ? (
                 <>
                   <RefreshCw size={16} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
-                  <span>Connecting to Stripe Secure Checkout...</span>
+                  <span>Processing Payment via {paymentMethod.toUpperCase()}...</span>
+                </>
+              ) : paymentMethod === 'paypal' ? (
+                <>
+                  <span>Pay ${calculateTotal(amount)} with PayPal</span>
+                </>
+              ) : paymentMethod === 'gpay' ? (
+                <>
+                  <span>Pay ${calculateTotal(amount)} with Google Pay</span>
                 </>
               ) : (
                 <>
@@ -2160,13 +2359,23 @@ func main() {
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key distribution</li>
                 </ul>
 
-                <button 
-                  onClick={() => handleCheckoutSubscription('pro')}
-                  disabled={loadingAction === 'sub_pro'}
-                  className="btn btn-secondary btn-block"
-                >
-                  {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($12.99)'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <button 
+                    onClick={() => handleCheckoutSubscription('pro')}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                  >
+                    {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Card / Stripe ($12.99)'}
+                  </button>
+                  <button 
+                    onClick={() => handlePayPalSubscription('pro', 12.99)}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                    style={{ fontSize: '0.75rem', padding: '0.375rem' }}
+                  >
+                    {loadingAction === 'sub_pp_pro' ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'PayPal / Google Pay'}
+                  </button>
+                </div>
               </div>
 
               {/* 2. Pro Plus ($22.99) */}
@@ -2187,13 +2396,23 @@ func main() {
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> 5,000 RPM rate limit</li>
                 </ul>
 
-                <button 
-                  onClick={() => handleCheckoutSubscription('proplus')}
-                  disabled={loadingAction === 'sub_proplus'}
-                  className="btn btn-primary btn-block"
-                >
-                  {loadingAction === 'sub_proplus' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($22.99)'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <button 
+                    onClick={() => handleCheckoutSubscription('proplus')}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-primary btn-block"
+                  >
+                    {loadingAction === 'sub_proplus' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Card / Stripe ($22.99)'}
+                  </button>
+                  <button 
+                    onClick={() => handlePayPalSubscription('proplus', 22.99)}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                    style={{ fontSize: '0.75rem', padding: '0.375rem' }}
+                  >
+                    {loadingAction === 'sub_pp_proplus' ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'PayPal / Google Pay'}
+                  </button>
+                </div>
               </div>
 
               {/* 3. Team ($49.99) */}
@@ -2213,13 +2432,23 @@ func main() {
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Up to 5 team sub-keys</li>
                 </ul>
 
-                <button 
-                  onClick={() => handleCheckoutSubscription('team')}
-                  disabled={loadingAction === 'sub_team'}
-                  className="btn btn-secondary btn-block"
-                >
-                  {loadingAction === 'sub_team' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($49.99)'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <button 
+                    onClick={() => handleCheckoutSubscription('team')}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                  >
+                    {loadingAction === 'sub_team' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Card / Stripe ($49.99)'}
+                  </button>
+                  <button 
+                    onClick={() => handlePayPalSubscription('team', 49.99)}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                    style={{ fontSize: '0.75rem', padding: '0.375rem' }}
+                  >
+                    {loadingAction === 'sub_pp_team' ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'PayPal / Google Pay'}
+                  </button>
+                </div>
               </div>
 
               {/* 4. Business ($119.99) */}
@@ -2239,13 +2468,23 @@ func main() {
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Priority routing failover</li>
                 </ul>
 
-                <button 
-                  onClick={() => handleCheckoutSubscription('business')}
-                  disabled={loadingAction === 'sub_business'}
-                  className="btn btn-secondary btn-block"
-                >
-                  {loadingAction === 'sub_business' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($119.99)'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <button 
+                    onClick={() => handleCheckoutSubscription('business')}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                  >
+                    {loadingAction === 'sub_business' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Card / Stripe ($119.99)'}
+                  </button>
+                  <button 
+                    onClick={() => handlePayPalSubscription('business', 119.99)}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                    style={{ fontSize: '0.75rem', padding: '0.375rem' }}
+                  >
+                    {loadingAction === 'sub_pp_business' ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'PayPal / Google Pay'}
+                  </button>
+                </div>
               </div>
 
               {/* 5. Enterprise ($299.99) */}
@@ -2266,14 +2505,24 @@ func main() {
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> 99.99% SLA & Dedicated Slack</li>
                 </ul>
 
-                <button 
-                  onClick={() => handleCheckoutSubscription('enterprise')}
-                  disabled={loadingAction === 'sub_enterprise'}
-                  className="btn btn-primary btn-block"
-                  style={{ background: '#9333ea', borderColor: '#a855f7' }}
-                >
-                  {loadingAction === 'sub_enterprise' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($299.99)'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+                  <button 
+                    onClick={() => handleCheckoutSubscription('enterprise')}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-primary btn-block"
+                    style={{ background: '#9333ea', borderColor: '#a855f7' }}
+                  >
+                    {loadingAction === 'sub_enterprise' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Card / Stripe ($299.99)'}
+                  </button>
+                  <button 
+                    onClick={() => handlePayPalSubscription('enterprise', 299.99)}
+                    disabled={Boolean(loadingAction)}
+                    className="btn btn-secondary btn-block"
+                    style={{ fontSize: '0.75rem', padding: '0.375rem' }}
+                  >
+                    {loadingAction === 'sub_pp_enterprise' ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : 'PayPal / Google Pay'}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

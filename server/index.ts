@@ -1397,6 +1397,213 @@ app.post('/api/create-portal-session', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * =========================================================================
+ * PAYPAL & GOOGLE PAY PAYMENT ENDPOINTS
+ * =========================================================================
+ */
+
+let cachedPayPalToken: { token: string; expiresAt: number } | null = null;
+
+async function getPayPalAccessToken(): Promise<string> {
+  const now = Date.now();
+  if (cachedPayPalToken && cachedPayPalToken.expiresAt > now + 60000) {
+    return cachedPayPalToken.token;
+  }
+
+  const clientId = process.env.PAYPAL_CLIENT_ID;
+  const secret = process.env.PAYPAL_CLIENT_SECRET;
+  const baseUrl = process.env.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com';
+
+  if (!clientId || !secret) {
+    throw new Error('PayPal credentials not configured.');
+  }
+
+  const auth = Buffer.from(`${clientId}:${secret}`).toString('base64');
+  const res = await fetch(`${baseUrl}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${auth}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`PayPal OAuth failed: ${errText}`);
+  }
+
+  const data: any = await res.json();
+  cachedPayPalToken = {
+    token: data.access_token,
+    expiresAt: now + data.expires_in * 1000,
+  };
+
+  return data.access_token;
+}
+
+/**
+ * Get Public PayPal Configuration for Frontend Google Pay & PayPal SDK
+ */
+app.get('/api/paypal/config', (_req: Request, res: Response) => {
+  res.json({
+    clientId: process.env.PAYPAL_CLIENT_ID || 'AcKXI-t30Gn8teATu8tCIzzQyR1QnCehhCMcE2eaGWfB0_nqe590Tie2bajzQoZU2iPUwcCG4B1LDzoo',
+    mode: process.env.PAYPAL_MODE || 'sandbox',
+    currency: 'USD',
+    googlePayEnabled: true,
+  });
+});
+
+/**
+ * Create PayPal / Google Pay Order
+ */
+app.post('/api/paypal/create-order', async (req: Request, res: Response) => {
+  try {
+    const { amount, currency = 'USD', description, planKey } = req.body;
+    const accessToken = await getPayPalAccessToken();
+    const baseUrl = process.env.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com';
+
+    const numAmount = Number(amount);
+    if (isNaN(numAmount) || numAmount < 1) {
+      return res.status(400).json({ error: 'Valid amount is required.' });
+    }
+
+    const orderPayload = {
+      intent: 'CAPTURE',
+      purchase_units: [
+        {
+          reference_id: planKey ? `sub_${planKey}_${Date.now()}` : `topup_${Date.now()}`,
+          description: description || (planKey ? `Keepseed AI Subscription (${planKey.toUpperCase()})` : `Keepseed AI Prepaid Recharge ($${numAmount.toFixed(2)})`),
+          custom_id: JSON.stringify({ planKey, amount: numAmount }),
+          amount: {
+            currency_code: currency.toUpperCase(),
+            value: numAmount.toFixed(2),
+          },
+        },
+      ],
+      application_context: {
+        brand_name: 'Keepseed AI Platform',
+        landing_page: 'NO_PREFERENCE',
+        user_action: 'PAY_NOW',
+        return_url: `${getBaseUrl(req)}/top-up?paypal_success=true`,
+        cancel_url: `${getBaseUrl(req)}/top-up?paypal_cancel=true`,
+      },
+    };
+
+    const orderRes = await fetch(`${baseUrl}/v2/checkout/orders`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(orderPayload),
+    });
+
+    const orderData: any = await orderRes.json();
+    if (!orderRes.ok) {
+      return res.status(orderRes.status).json({ error: orderData.message || 'PayPal order creation failed.' });
+    }
+
+    const approveLink = orderData.links?.find((l: any) => l.rel === 'approve')?.href;
+
+    res.json({
+      orderId: orderData.id,
+      status: orderData.status,
+      approveUrl: approveLink,
+    });
+  } catch (err: any) {
+    console.error('PayPal Create Order Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Capture PayPal / Google Pay Order
+ */
+app.post('/api/paypal/capture-order', async (req: Request, res: Response) => {
+  try {
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ error: 'Order ID is required for capture.' });
+    }
+
+    const user = resolveUserFromRequest(req);
+    const accessToken = await getPayPalAccessToken();
+    const baseUrl = process.env.PAYPAL_BASE_URL || 'https://api-m.sandbox.paypal.com';
+
+    const captureRes = await fetch(`${baseUrl}/v2/checkout/orders/${orderId}/capture`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const captureData: any = await captureRes.json();
+    if (!captureRes.ok) {
+      return res.status(captureRes.status).json({ error: captureData.message || 'PayPal capture failed.' });
+    }
+
+    const purchaseUnit = captureData.purchase_units?.[0];
+    const captureObj = purchaseUnit?.payments?.captures?.[0];
+    const amountVal = parseFloat(captureObj?.amount?.value || '0');
+    const currency = captureObj?.amount?.currency_code || 'USD';
+    let customData: any = {};
+    try {
+      if (purchaseUnit?.custom_id) {
+        customData = JSON.parse(purchaseUnit.custom_id);
+      }
+    } catch {
+      // ignore
+    }
+
+    if (user) {
+      if (customData.planKey) {
+        const planKey = customData.planKey;
+        const planNames: Record<string, string> = {
+          starter: 'Keepseed Starter',
+          pro: 'Keepseed Pro',
+          proplus: 'Keepseed Pro Plus',
+          team: 'Keepseed Team',
+          business: 'Keepseed Business',
+          enterprise: 'Keepseed Enterprise',
+        };
+        user.plan = planKey;
+        user.planName = planNames[planKey] || 'Pro Platform Plan';
+        user.planStatus = 'active';
+        user.monthlyQuota = planKey === 'enterprise' ? 200000000 : planKey === 'business' ? 75000000 : planKey === 'team' ? 25000000 : planKey === 'proplus' ? 15000000 : 10000000;
+        console.log(`[PayPal] Activated subscription: ${user.planName} for user: ${user.email}`);
+      } else {
+        user.creditBalance = Number((user.creditBalance + amountVal).toFixed(2));
+        console.log(`[PayPal] Credited top-up balance of $${amountVal.toFixed(2)} to user: ${user.email}`);
+      }
+    }
+
+    db.invoices.unshift({
+      id: `pp_${captureData.id || orderId}`,
+      date: new Date().toISOString().split('T')[0],
+      description: customData.planKey ? `PayPal Subscription: ${customData.planKey.toUpperCase()}` : `PayPal / Google Pay Top-Up ($${amountVal.toFixed(2)})`,
+      amount: amountVal,
+      currency,
+      status: 'Paid',
+      pdfUrl: '#',
+    });
+
+    res.json({
+      status: 'COMPLETED',
+      orderId,
+      captureId: captureObj?.id,
+      amount: amountVal,
+      currency,
+      userBalance: user?.creditBalance,
+    });
+  } catch (err: any) {
+    console.error('PayPal Capture Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Single page app fallback for React Router / client-side views
 app.get('*splat', (req: Request, res: Response) => {
   if (!req.path.startsWith('/api') && !req.path.startsWith('/v1')) {
