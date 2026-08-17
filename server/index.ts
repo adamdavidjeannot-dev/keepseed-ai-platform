@@ -126,7 +126,7 @@ app.post('/api/create-topup-checkout', async (req: Request, res: Response) => {
           price_data: {
             currency: currency,
             product_data: {
-              name: 'NexusAI API Credit Top-Up',
+              name: 'Keepseed API Credit Top-Up',
               description: 'Prepaid credit balance for AI chat & API endpoint consumption',
             },
             unit_amount: Math.round(amount * 100),

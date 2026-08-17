@@ -28,7 +28,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('chat');
   const [selectedCurrency, setSelectedCurrency] = useState<'USD' | 'CNY'>('USD');
   const [amount, setAmount] = useState<number>(2);
-  const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'antom' | 'gpay'>('paypal');
+  const [paymentMethod, setPaymentMethod] = useState<'paypal' | 'antom' | 'gpay'>('gpay');
   const [codeTab, setCodeTab] = useState<'curl' | 'python' | 'nodejs'>('curl');
   const [copied, setCopied] = useState(false);
 
@@ -55,7 +55,7 @@ export default function App() {
         ...prev,
         { 
           role: 'assistant', 
-          text: `NexusAI (${modelType.toUpperCase()} mode): Response generated for "${userMsg}". DeepThink: ${deepThinkEnabled ? 'Enabled' : 'Disabled'}, Web Search: ${searchEnabled ? 'Enabled' : 'Disabled'}.` 
+          text: `Keepseed (${modelType.toUpperCase()} mode): Response generated for "${userMsg}". DeepThink: ${deepThinkEnabled ? 'Enabled' : 'Disabled'}, Web Search: ${searchEnabled ? 'Enabled' : 'Disabled'}.` 
         }
       ]);
     }, 500);
@@ -123,11 +123,11 @@ export default function App() {
 
   const getCodeSnippet = () => {
     if (codeTab === 'curl') {
-      return `curl https://api.nexusai.example/chat/completions \\
+      return `curl https://api.keepseed.io/chat/completions \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer \${NEXUS_API_KEY}" \\
+  -H "Authorization: Bearer \${KEEPSEED_API_KEY}" \\
   -d '{
-        "model": "nexus-v4-pro",
+        "model": "keepseed-v4-pro",
         "messages": [
           {"role": "system", "content": "You are a helpful assistant."},
           {"role": "user", "content": "Hello!"}
@@ -142,12 +142,12 @@ export default function App() {
 from openai import OpenAI
 
 client = OpenAI(
-    api_key=os.environ.get('NEXUS_API_KEY'),
-    base_url="https://api.nexusai.example"
+    api_key=os.environ.get('KEEPSEED_API_KEY'),
+    base_url="https://api.keepseed.io"
 )
 
 response = client.chat.completions.create(
-    model="nexus-v4-pro",
+    model="keepseed-v4-pro",
     messages=[
         {"role": "system", "content": "You are a helpful assistant"},
         {"role": "user", "content": "Hello"},
@@ -162,14 +162,14 @@ print(response.choices[0].message.content)`;
     return `import OpenAI from "openai";
 
 const openai = new OpenAI({
-  baseURL: 'https://api.nexusai.example',
-  apiKey: process.env.NEXUS_API_KEY,
+  baseURL: 'https://api.keepseed.io',
+  apiKey: process.env.KEEPSEED_API_KEY,
 });
 
 async function main() {
   const completion = await openai.chat.completions.create({
     messages: [{ role: "system", content: "You are a helpful assistant." }],
-    model: "nexus-v4-pro",
+    model: "keepseed-v4-pro",
     thinking: { type: "enabled" },
     reasoning_effort: "high",
     stream: false,
@@ -187,7 +187,7 @@ main();`;
       <aside className="sidebar">
         <div className="brand">
           <Bot size={28} />
-          <span>NexusAI</span>
+          <span>Keepseed</span>
         </div>
 
         <button 
@@ -388,7 +388,7 @@ main();`;
                       handleSendMessage();
                     }
                   }}
-                  placeholder="Message NexusAI..."
+                  placeholder="Message Keepseed..."
                   rows={2}
                   style={{
                     width: '100%',
@@ -468,7 +468,7 @@ main();`;
 
             <h1 style={{ fontSize: '2.25rem', marginBottom: '1rem' }}>Your First API Call</h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-              The NexusAI API uses an API format compatible with standard OpenAI/Anthropic SDKs. By modifying the configuration, you can use existing SDKs or software tools to connect seamlessly.
+              The Keepseed API uses an API format compatible with standard OpenAI/Anthropic SDKs. By modifying the configuration, you can use existing SDKs or software tools to connect seamlessly.
             </p>
 
             {/* API Parameters Table */}
@@ -483,11 +483,11 @@ main();`;
                 <tbody>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>base_url (OpenAI)</td>
-                    <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace' }}>https://api.nexusai.example</td>
+                    <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace' }}>https://api.keepseed.io</td>
                   </tr>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>base_url (Anthropic)</td>
-                    <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace' }}>https://api.nexusai.example/anthropic</td>
+                    <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace' }}>https://api.keepseed.io/anthropic</td>
                   </tr>
                   <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
                     <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>api_key</td>
@@ -496,7 +496,7 @@ main();`;
                   <tr>
                     <td style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>model</td>
                     <td style={{ padding: '0.75rem 1rem', fontFamily: 'monospace' }}>
-                      nexus-v4-flash<br />nexus-v4-pro
+                      keepseed-v4-flash<br />keepseed-v4-pro
                     </td>
                   </tr>
                 </tbody>
@@ -506,7 +506,7 @@ main();`;
             {/* Integration Section */}
             <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem', marginTop: '2rem' }}>Integrate with Agent Tools</h2>
             <p style={{ color: 'var(--text-secondary)', lineHeight: 1.6, marginBottom: '1.5rem' }}>
-              NexusAI API is supported by developer tools and AI agent integrations. You can use Nexus models as backend providers directly across standard agents.
+              Keepseed API is supported by developer tools and AI agent integrations. You can use Keepseed models as backend providers directly across standard agents.
             </p>
 
             {/* Code Examples Section */}
@@ -616,13 +616,29 @@ main();`;
 
             {/* Platform Announcement Notice */}
             <div style={{ marginBottom: '1.5rem', padding: '0.75rem', borderRadius: '0.5rem', background: 'rgba(234, 179, 8, 0.1)', border: '1px solid rgba(234, 179, 8, 0.2)', color: '#eab308', fontSize: '0.875rem' }}>
-              The official version of Nexus-V1-Pro model service has been updated with off-peak rates. Please review the pricing documentation for full details.
+              The official version of Keepseed-V1-Pro model service has been updated with off-peak rates. Please review the pricing documentation for full details.
             </div>
 
             {/* Payment Methods */}
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Payment method</label>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div 
+                  onClick={() => setPaymentMethod('gpay')}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '1rem',
+                    borderRadius: '0.5rem',
+                    border: `1px solid ${paymentMethod === 'gpay' ? 'var(--accent-color)' : 'var(--border-color)'}`,
+                    background: 'var(--bg-secondary)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <span>Google Pay / Apple Pay</span>
+                  <input type="radio" checked={paymentMethod === 'gpay'} readOnly />
+                </div>
                 <div 
                   onClick={() => setPaymentMethod('paypal')}
                   style={{
@@ -654,22 +670,6 @@ main();`;
                 >
                   <span>Credit Card / Visa / Mastercard</span>
                   <input type="radio" checked={paymentMethod === 'antom'} readOnly />
-                </div>
-                <div 
-                  onClick={() => setPaymentMethod('gpay')}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    padding: '1rem',
-                    borderRadius: '0.5rem',
-                    border: `1px solid ${paymentMethod === 'gpay' ? 'var(--accent-color)' : 'var(--border-color)'}`,
-                    background: 'var(--bg-secondary)',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <span>Google Pay / Apple Pay</span>
-                  <input type="radio" checked={paymentMethod === 'gpay'} readOnly />
                 </div>
               </div>
             </div>
