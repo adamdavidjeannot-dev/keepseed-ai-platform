@@ -677,9 +677,9 @@ main();`;
             <button 
               onClick={handleCheckoutTopUp} 
               className="btn" 
-              style={{ width: '100%', padding: '0.75rem', fontSize: '1rem' }}
+              style={{ width: '100%', padding: '0.75rem', fontSize: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}
             >
-              Pay ${calculateTotal(amount)} via Stripe
+              <span>Pay ${calculateTotal(amount)} with {paymentMethod === 'gpay' ? 'Google Pay' : paymentMethod === 'paypal' ? 'Stripe Checkout' : 'Card'}</span>
             </button>
 
             {/* Information Footer */}
