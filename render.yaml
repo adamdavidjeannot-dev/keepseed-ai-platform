@@ -5,6 +5,7 @@ services:
     plan: free
     buildCommand: npm install && npm run build
     startCommand: node dist-server/index.js
+    healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
         value: production
@@ -12,7 +13,11 @@ services:
         sync: false
       - key: STRIPE_PUBLISHABLE_KEY
         sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
       - key: PRICE_STARTER_MONTHLY
         sync: false
       - key: PRICE_PRO_MONTHLY
         sync: false
+      - key: ENABLE_AUTOMATIC_TAX
+        value: "false"

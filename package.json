@@ -1,15 +1,18 @@
 {
-  "name": "ai-platform-template",
+  "name": "keepseed-ai-platform",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
+  "description": "Production-ready AI Platform with Stripe Billing, API Key Management, and Render Deployment Support",
   "scripts": {
     "dev": "vite",
+    "dev:server": "tsx watch server/index.ts",
     "build:server": "esbuild server/index.ts --bundle --platform=node --format=esm --outfile=dist-server/index.js --external:express --external:cors --external:dotenv --external:stripe",
     "build": "tsc -b && vite build && npm run build:server",
     "start": "node dist-server/index.js",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup:stripe": "tsx scripts/setupStripeCatalog.ts"
   },
   "dependencies": {
     "cors": "^2.8.6",
