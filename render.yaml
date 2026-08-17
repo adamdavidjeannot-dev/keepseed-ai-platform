@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: keepseed-ai-platform
+    env: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: PRICE_STARTER_MONTHLY
+        sync: false
+      - key: PRICE_PRO_MONTHLY
+        sync: false
