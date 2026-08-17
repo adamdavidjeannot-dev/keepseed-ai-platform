@@ -756,12 +756,12 @@ app.get('/api/config', (req: Request, res: Response) => {
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     accountId: process.env.STRIPE_ACCOUNT_ID || '',
     prices: {
+      starter: process.env.PRICE_STARTER_MONTHLY || 'price_1U5Z0mGv8CweAODP5yRvYUJq',
       pro: process.env.PRICE_PRO_MONTHLY || 'price_1U5YrOGv8CweAODPwgN386zn',
       proplus: process.env.PRICE_PRO_PLUS_MONTHLY || 'price_1U5Yv0Gv8CweAODP9wXwxWIC',
       team: process.env.PRICE_TEAM_MONTHLY || 'price_1U5YzwGv8CweAODP0QM45ZJu',
       business: process.env.PRICE_BUSINESS_MONTHLY || 'price_1U5YzxGv8CweAODPFcsJt0UI',
       enterprise: process.env.PRICE_ENTERPRISE_MONTHLY || 'price_1U5YzxGv8CweAODPYril7TcL',
-      starter: process.env.PRICE_PRO_MONTHLY || 'price_1U5YrOGv8CweAODPwgN386zn',
     },
     currency: 'usd',
     taxEnabled: process.env.ENABLE_AUTOMATIC_TAX === 'true',
