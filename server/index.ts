@@ -756,8 +756,8 @@ app.get('/api/config', (req: Request, res: Response) => {
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
     accountId: process.env.STRIPE_ACCOUNT_ID || '',
     prices: {
-      starter: process.env.PRICE_STARTER_MONTHLY || 'price_1U5VUcDy28wjEXYsN7AwEJMb',
-      pro: process.env.PRICE_PRO_MONTHLY || 'price_1U5VUcDy28wjEXYsMwd5Ltxo',
+      starter: process.env.PRICE_STARTER_MONTHLY || 'price_1U5YrOGv8CweAODPwgN386zn',
+      pro: process.env.PRICE_PRO_MONTHLY || 'price_1U5Yv0Gv8CweAODP9wXwxWIC',
     },
     currency: 'usd',
     taxEnabled: process.env.ENABLE_AUTOMATIC_TAX === 'true',

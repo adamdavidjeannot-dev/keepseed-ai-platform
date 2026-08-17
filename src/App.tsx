@@ -2130,19 +2130,19 @@ func main() {
 
             <div className="pricing-grid">
               <div className="pricing-card">
-                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Starter Plan</div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>For indie developers & prototypes.</p>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Unlimited Flash model with Pro model access.</p>
 
                 <div className="plan-price">
-                  ${billingCycle === 'monthly' ? '19' : '15'}
+                  ${billingCycle === 'monthly' ? '12.99' : '10.99'}
                   <span className="plan-price-period">/ month</span>
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000,000 monthly token quota</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> DeepSeek-V3 model access</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 1,000 Requests/min rate limit</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Standard community support</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Unlimited Use Keepseed-Flash</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Access to Keepseed-Pro (DeepSeek-R1)</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000 Requests/min rate limit</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key generation & distribution</li>
                 </ul>
 
                 <button 
@@ -2150,24 +2150,24 @@ func main() {
                   disabled={loadingAction === 'sub_starter'}
                   className="btn btn-secondary btn-block"
                 >
-                  {loadingAction === 'sub_starter' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Starter'}
+                  {loadingAction === 'sub_starter' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Pro ($12.99)'}
                 </button>
               </div>
 
               <div className="pricing-card featured">
                 <div className="featured-pill">RECOMMENDED</div>
-                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Pro Platform</div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>For scaling AI production products.</p>
+                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro Plus</div>
+                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Highest model quotas + $10/mo included API credits.</p>
 
                 <div className="plan-price">
-                  ${billingCycle === 'monthly' ? '49' : '39'}
+                  ${billingCycle === 'monthly' ? '22.99' : '18.99'}
                   <span className="plan-price-period">/ month</span>
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000,000 monthly token quota</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> DeepSeek-V3 & DeepSeek-R1 access</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key distribution & dethrottling</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Everything in Keepseed Pro</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Higher Keepseed-Pro (R1) limits</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> $10 of monthly API token credits added</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000 Requests/min rate limit</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Priority email & chat support</li>
                 </ul>
@@ -2177,7 +2177,7 @@ func main() {
                   disabled={loadingAction === 'sub_pro'}
                   className="btn btn-primary btn-block"
                 >
-                  {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Pro'}
+                  {loadingAction === 'sub_pro' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe Pro Plus ($22.99)'}
                 </button>
               </div>
 
