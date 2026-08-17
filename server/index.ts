@@ -209,7 +209,7 @@ app.post('/api/create-portal-session', async (req: Request, res: Response) => {
 });
 
 // Single page app fallback
-app.get('*', (req: Request, res: Response) => {
+app.get('*splat', (req: Request, res: Response) => {
   if (!req.path.startsWith('/api')) {
     res.sendFile(path.join(distPath, 'index.html'));
   }
