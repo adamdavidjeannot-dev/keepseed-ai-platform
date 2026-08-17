@@ -2,9 +2,9 @@ services:
   - type: web
     name: keepseed-ai-platform
     env: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build
-    startCommand: npm start
+    startCommand: npx tsx server/index.ts
     envVars:
       - key: NODE_ENV
         value: production
