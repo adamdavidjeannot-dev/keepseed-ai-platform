@@ -36,7 +36,8 @@ import {
   Terminal,
   Search,
   Code,
-  DollarSign
+  DollarSign,
+  Gauge
 } from 'lucide-react';
 import './App.css';
 
@@ -49,6 +50,8 @@ interface ApiKeyItem {
   lastUsed: string;
   permissions: 'Full Access' | 'Read Only';
   rateLimitRpm?: number;
+  tokensConsumed?: number;
+  costIncurred?: number;
   status: 'Active' | 'Revoked';
 }
 
@@ -61,6 +64,9 @@ interface ServerConfig {
   };
   currency: string;
   taxEnabled: boolean;
+  markupMultiplier: number;
+  freeTierLimit: number;
+  deepseekEnabled: boolean;
 }
 
 interface ApiLogItem {
@@ -69,10 +75,12 @@ interface ApiLogItem {
   method: string;
   endpoint: string;
   model: string;
+  upstreamModel: string;
   status: number;
   latencyMs: number;
   tokens: { prompt: number; completion: number; total: number };
   cost: number;
+  wholesaleCost: number;
   apiKeyPrefix: string;
   ip: string;
 }
@@ -88,6 +96,7 @@ interface UserProfile {
   planStatus: 'active' | 'past_due' | 'canceled';
   monthlyQuota: number;
   monthlyUsage: number;
+  freeTierLimit: number;
   renewalDate: string;
 }
 
@@ -110,6 +119,7 @@ export default function App() {
     planStatus: 'active',
     monthlyQuota: 10000000,
     monthlyUsage: 4821900,
+    freeTierLimit: 50000,
     renewalDate: '2026-09-01T00:00:00Z',
   });
 
@@ -122,7 +132,10 @@ export default function App() {
       pro: 'price_1U5VUcDy28wjEXYsMwd5Ltxo'
     },
     currency: 'usd',
-    taxEnabled: false
+    taxEnabled: false,
+    markupMultiplier: 2.0,
+    freeTierLimit: 50000,
+    deepseekEnabled: true
   });
 
   // Top Up States
@@ -194,7 +207,6 @@ export default function App() {
   };
 
   useEffect(() => {
-    // 1. Fetch public config & user data
     fetch('/api/config')
       .then((res) => res.json())
       .then((data: ServerConfig) => {
@@ -204,7 +216,6 @@ export default function App() {
 
     refreshUserData();
 
-    // 2. Parse URL parameters (Stripe return handling)
     const query = new URLSearchParams(window.location.search);
     const sessionId = query.get('session_id');
     const isSuccess = query.get('success');
@@ -258,7 +269,7 @@ export default function App() {
     setInputPrompt('');
     setIsTyping(true);
 
-    const targetModel = modelType === 'expert' ? 'keepseed-v4-pro' : modelType === 'vision' ? 'keepseed-v4-vision' : 'keepseed-v4-instant';
+    const targetModel = modelType === 'expert' ? 'deepseek-reasoner' : 'deepseek-chat';
 
     try {
       const res = await fetch('/v1/chat/completions', {
@@ -270,13 +281,15 @@ export default function App() {
             ...messages.map((m) => ({ role: m.role, content: m.text })),
             { role: 'user', content: prompt }
           ],
-          thinking: { type: deepThinkEnabled ? 'enabled' : 'disabled' },
           stream: false,
         }),
       });
 
       const data = await res.json();
-      const content = data.choices?.[0]?.message?.content || 'Response generated successfully.';
+      if (data.error) {
+        throw new Error(data.error.message);
+      }
+      const content = data.choices?.[0]?.message?.content || 'DeepSeek response generated successfully.';
 
       setMessages((prev) => [
         ...prev,
@@ -292,7 +305,7 @@ export default function App() {
         ...prev,
         { 
           role: 'assistant', 
-          text: `[Keepseed Gateway]: Response generated for query: "${prompt}". System operating normally.`,
+          text: `[DeepSeek Response]: Analysis complete for: "${prompt}". System operating normally under 2x token billing model.`,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -339,7 +352,7 @@ export default function App() {
               if (line.startsWith('data: ') && !line.includes('[DONE]')) {
                 try {
                   const json = JSON.parse(line.replace('data: ', ''));
-                  const delta = json.choices?.[0]?.delta?.content || '';
+                  const delta = json.choices?.[0]?.delta?.content || json.choices?.[0]?.delta?.reasoning_content || '';
                   fullText += delta;
                   setPgResponse(fullText);
                 } catch {
@@ -545,7 +558,7 @@ export default function App() {
 
 const client = new OpenAI({
   baseURL: "https://api.keepseed.io/v1",
-  apiKey: process.env.KEEPSEED_API_KEY,
+  apiKey: process.env.KEEPSEED_API_KEY, // Generated user sub-key (kp_live_...)
 });
 
 async function main() {
@@ -572,13 +585,11 @@ main();`;
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer \${KEEPSEED_API_KEY}" \\
   -d '{
-    "model": "keepseed-v4-pro",
+    "model": "deepseek-reasoner",
     "messages": [
       {"role": "system", "content": "You are a specialized AI assistant."},
       {"role": "user", "content": "Analyze current system latency metrics."}
     ],
-    "thinking": {"type": "enabled"},
-    "reasoning_effort": "high",
     "stream": false
   }'`;
     }
@@ -586,20 +597,19 @@ main();`;
       return `import os
 from openai import OpenAI
 
+# Connect to Keepseed Proxy with DeepSeek Master Gateway
 client = OpenAI(
-    api_key=os.environ.get("KEEPSEED_API_KEY"),
+    api_key=os.environ.get("KEEPSEED_API_KEY"), # User sub-key (kp_live_...)
     base_url="https://api.keepseed.io/v1"
 )
 
 response = client.chat.completions.create(
-    model="keepseed-v4-pro",
+    model="deepseek-reasoner", # or deepseek-chat (DeepSeek-V3)
     messages=[
         {"role": "system", "content": "You are a specialized AI assistant."},
         {"role": "user", "content": "Analyze current system latency metrics."},
     ],
-    stream=False,
-    reasoning_effort="high",
-    extra_body={"thinking": {"type": "enabled"}}
+    stream=False
 )
 
 print(response.choices[0].message.content)`;
@@ -609,12 +619,12 @@ print(response.choices[0].message.content)`;
 
 const client = new OpenAI({
   baseURL: "https://api.keepseed.io/v1",
-  apiKey: process.env.KEEPSEED_API_KEY,
+  apiKey: process.env.KEEPSEED_API_KEY, // User sub-key (kp_live_...)
 });
 
 async function main() {
   const completion = await client.chat.completions.create({
-    model: "keepseed-v4-pro",
+    model: "deepseek-chat", // or deepseek-reasoner
     messages: [
       { role: "system", content: "You are a specialized AI assistant." },
       { role: "user", content: "Analyze current system latency metrics." }
@@ -645,7 +655,7 @@ func main() {
 	resp, err := client.CreateChatCompletion(
 		context.Background(),
 		openai.ChatCompletionRequest{
-			Model: "keepseed-v4-pro",
+			Model: "deepseek-reasoner",
 			Messages: []openai.ChatCompletionMessage{
 				{
 					Role:    openai.ChatMessageRoleUser,
@@ -671,20 +681,18 @@ func main() {
 
   return (
     <div className="app-container">
-      {/* Mobile Drawer Backdrop */}
       <div 
         className={`sidebar-backdrop ${mobileMenuOpen ? 'open' : ''}`}
         onClick={() => setMobileMenuOpen(false)}
       />
 
-      {/* Sidebar Navigation */}
       <aside className={`sidebar ${mobileMenuOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
           <div className="brand-icon">
             <Bot size={20} />
           </div>
           <span className="brand-title">Keepseed</span>
-          <span className="brand-badge">v2.0 PRO</span>
+          <span className="brand-badge">DEEPSEEK 2X</span>
         </div>
 
         <button 
@@ -719,14 +727,14 @@ func main() {
             onClick={() => { setActiveTab('usage'); setMobileMenuOpen(false); }}
           >
             <Activity size={18} />
-            <span>Usage & Metrics</span>
+            <span>Usage & Quotas</span>
           </li>
           <li 
             className={`nav-item ${activeTab === 'api-keys' ? 'active' : ''}`}
             onClick={() => { setActiveTab('api-keys'); setMobileMenuOpen(false); }}
           >
             <Key size={18} />
-            <span>API Keys</span>
+            <span>Sub-Key Manager</span>
           </li>
           <li 
             className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
@@ -761,7 +769,7 @@ func main() {
             onClick={() => { setActiveTab('pricing'); setMobileMenuOpen(false); }}
           >
             <Tag size={18} />
-            <span>Pricing Plans</span>
+            <span>Token Pricing (2x)</span>
           </li>
           <li 
             className={`nav-item ${activeTab === 'help' ? 'active' : ''}`}
@@ -783,9 +791,7 @@ func main() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
       <main className="main-content">
-        {/* Top Header */}
         <header className="top-header">
           <div className="header-left">
             <button 
@@ -796,15 +802,15 @@ func main() {
               <Menu size={20} />
             </button>
             <div className="header-title">
-              {activeTab === 'chat' && 'AI Chat Interface'}
+              {activeTab === 'chat' && 'DeepSeek-Powered Chat'}
               {activeTab === 'playground' && 'Model Sandbox & Playground'}
-              {activeTab === 'usage' && 'Usage & Analytics'}
-              {activeTab === 'api-keys' && 'API Key Management'}
+              {activeTab === 'usage' && 'Usage Analytics & Token Limits'}
+              {activeTab === 'api-keys' && 'Sub-Key Generation & Rate Limits'}
               {activeTab === 'logs' && 'Real-Time Request Tracing'}
               {activeTab === 'top-up' && 'Top Up Balance'}
               {activeTab === 'billing' && 'Billing & Subscription'}
               {activeTab === 'docs' && 'Developer Documentation'}
-              {activeTab === 'pricing' && 'Pricing & Plans'}
+              {activeTab === 'pricing' && '2x DeepSeek Token Pricing'}
               {activeTab === 'help' && 'Help & FAQ'}
             </div>
           </div>
@@ -820,12 +826,11 @@ func main() {
             </div>
             <div className="status-indicator">
               <div className="status-dot" />
-              <span>Engine Active</span>
+              <span>DeepSeek Master Key Active</span>
             </div>
           </div>
         </header>
 
-        {/* Global Toast Alert */}
         {notification && (
           <div style={{ padding: '1rem 2rem 0' }}>
             <div className={`toast-banner toast-${notification.type}`}>
@@ -851,14 +856,16 @@ func main() {
                 <button
                   className={`model-pill-btn ${modelType === 'instant' ? 'active' : ''}`}
                   onClick={() => setModelType('instant')}
+                  title="DeepSeek-V3 High-Throughput Chat"
                 >
-                  <Zap size={14} /> Instant
+                  <Zap size={14} /> DeepSeek-V3 (Instant)
                 </button>
                 <button
                   className={`model-pill-btn ${modelType === 'expert' ? 'active' : ''}`}
                   onClick={() => setModelType('expert')}
+                  title="DeepSeek-R1 Cognitive Reasoning"
                 >
-                  <Award size={14} /> Expert
+                  <Award size={14} /> DeepSeek-R1 (Reasoner)
                 </button>
                 <button
                   className={`model-pill-btn ${modelType === 'vision' ? 'active' : ''}`}
@@ -875,9 +882,9 @@ func main() {
                   <div className="chat-empty-icon">
                     <Sparkles size={28} />
                   </div>
-                  <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>Start Prompting with Keepseed</h2>
+                  <h2 style={{ fontSize: '1.5rem', fontWeight: 700, marginBottom: '0.5rem' }}>Direct DeepSeek Master Interface</h2>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.9375rem' }}>
-                    Select an operational model, enable reasoning or web search, and execute queries across our enterprise infrastructure.
+                    Connected via primary master key with automated dethrottling, rate limiting, and 2x wholesale API token billing.
                   </p>
 
                   <div className="chat-prompt-suggestions">
@@ -897,10 +904,10 @@ func main() {
                     </div>
                     <div 
                       className="suggestion-card"
-                      onClick={() => handleSendMessage('Explain rate limits & token bucket implementation for multi-tenant APIs')}
+                      onClick={() => handleSendMessage('Explain DeepSeek-R1 chain-of-thought vs standard fine-tuned models')}
                     >
-                      <div className="suggestion-title">Rate Limit Architecture</div>
-                      <div className="suggestion-desc">Token bucket & concurrency algorithms</div>
+                      <div className="suggestion-title">DeepSeek-R1 Architecture</div>
+                      <div className="suggestion-desc">Reasoning tokens & cognitive optimization</div>
                     </div>
                   </div>
                 </div>
@@ -937,7 +944,7 @@ func main() {
                   </div>
                   <div className="message-bubble assistant" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <RefreshCw size={14} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Streaming Keepseed tokens...</span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>DeepSeek model processing tokens...</span>
                   </div>
                 </div>
               )}
@@ -955,7 +962,7 @@ func main() {
                       handleSendMessage();
                     }
                   }}
-                  placeholder={`Message Keepseed (${modelType.toUpperCase()} mode)...`}
+                  placeholder={`Message DeepSeek (${modelType === 'expert' ? 'DeepSeek-R1' : 'DeepSeek-V3'})...`}
                   rows={2}
                 />
 
@@ -999,7 +1006,6 @@ func main() {
         {activeTab === 'playground' && (
           <div className="page-container" style={{ maxWidth: '1200px' }}>
             <div className="playground-layout">
-              {/* Main Prompt & Execution Area */}
               <div className="playground-main">
                 <div className="card" style={{ padding: '1rem' }}>
                   <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
@@ -1024,7 +1030,7 @@ func main() {
                       className="btn btn-primary btn-sm"
                     >
                       {pgIsRunning ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
-                      <span>Execute ({pgStream ? 'Streaming' : 'Batch'})</span>
+                      <span>Execute DeepSeek ({pgStream ? 'Streaming' : 'Batch'})</span>
                     </button>
                   </div>
                   <textarea
@@ -1036,7 +1042,6 @@ func main() {
                   />
                 </div>
 
-                {/* Output Tabs (Response vs Code) */}
                 <div className="card" style={{ flex: 1, minHeight: '260px', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -1067,7 +1072,7 @@ func main() {
                     <div style={{ flex: 1, background: '#090d16', borderRadius: '6px', padding: '1rem', overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.875rem', lineHeight: 1.6, color: '#f1f5f9', whiteSpace: 'pre-wrap' }}>
                       {pgResponse || (
                         <span style={{ color: 'var(--text-muted)' }}>
-                          Run query to inspect token generation stream...
+                          Run query to inspect token generation stream from DeepSeek...
                         </span>
                       )}
                     </div>
@@ -1089,7 +1094,6 @@ func main() {
                 </div>
               </div>
 
-              {/* Sidebar Parameters Controller */}
               <aside className="playground-sidebar">
                 <div style={{ fontSize: '0.9375rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
                   Model Hyperparameters
@@ -1097,16 +1101,17 @@ func main() {
 
                 <div className="param-group">
                   <label className="param-header">
-                    <span>MODEL</span>
+                    <span>UPSTREAM MODEL</span>
                   </label>
                   <select 
                     value={pgModel} 
                     onChange={(e) => setPgModel(e.target.value)}
                     style={{ padding: '0.5rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', fontSize: '0.8125rem' }}
                   >
-                    <option value="keepseed-v4-pro">keepseed-v4-pro (High Reasoning)</option>
-                    <option value="keepseed-v4-instant">keepseed-v4-instant (Low Latency)</option>
-                    <option value="keepseed-v4-vision">keepseed-v4-vision (Multimodal)</option>
+                    <option value="deepseek-reasoner">deepseek-reasoner (DeepSeek-R1)</option>
+                    <option value="deepseek-chat">deepseek-chat (DeepSeek-V3)</option>
+                    <option value="keepseed-v4-pro">keepseed-v4-pro (Reasoner Alias)</option>
+                    <option value="keepseed-v4-instant">keepseed-v4-instant (Chat Alias)</option>
                   </select>
                 </div>
 
@@ -1157,20 +1162,40 @@ func main() {
         {activeTab === 'usage' && (
           <div className="page-container">
             <div className="page-header">
-              <h1 className="page-title">Usage & Performance Analytics</h1>
-              <p className="page-subtitle">Inspect token volume, rate limits, and model consumption distribution across your organization.</p>
+              <h1 className="page-title">Usage & Token Limits</h1>
+              <p className="page-subtitle">Inspect token consumption, free tier ceiling enforcement, and 2x pricing cost metrics.</p>
+            </div>
+
+            {/* Free Tier Limit Progress Card */}
+            <div className="card" style={{ marginBottom: '1.5rem', background: 'rgba(59, 130, 246, 0.08)', borderColor: 'rgba(59, 130, 246, 0.3)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600, color: '#60a5fa' }}>
+                  <Gauge size={18} />
+                  <span>Free Tier Token Ceiling (Stops after {serverConfig.freeTierLimit.toLocaleString()} tokens)</span>
+                </div>
+                <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
+                  {userProfile.monthlyUsage.toLocaleString()} / {serverConfig.freeTierLimit.toLocaleString()} Used
+                </span>
+              </div>
+              <div style={{ height: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', overflow: 'hidden' }}>
+                <div 
+                  style={{ 
+                    width: `${Math.min(100, (userProfile.monthlyUsage / serverConfig.freeTierLimit) * 100)}%`, 
+                    height: '100%', 
+                    background: userProfile.monthlyUsage >= serverConfig.freeTierLimit ? '#ef4444' : '#3b82f6',
+                    borderRadius: '4px' 
+                  }} 
+                />
+              </div>
             </div>
 
             <div className="card-grid" style={{ marginBottom: '1.5rem' }}>
               <div className="card">
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>MONTHLY TOKEN USAGE</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>TOTAL TOKENS CONSUMED</div>
                 <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#60a5fa' }}>
                   {userProfile.monthlyUsage.toLocaleString()}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: 'var(--success)' }}>
-                  <span>↑ 14.2%</span>
-                  <span style={{ color: 'var(--text-muted)' }}>vs previous 30-day window</span>
-                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Metered via DeepSeek Upstream</div>
               </div>
 
               <div className="card">
@@ -1178,15 +1203,15 @@ func main() {
                 <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#10b981' }}>
                   ${userProfile.creditBalance.toFixed(2)}
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Auto-deducted per invocation</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Auto-deducted @ 2x wholesale rate</div>
               </div>
 
               <div className="card">
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>RATE LIMIT QUOTA (RPM)</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>MARKUP MULTIPLIER</div>
                 <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#f59e0b' }}>
-                  10,000 RPM
+                  2.0x
                 </div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>High-concurrency cluster</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Double DeepSeek Base Pricing</div>
               </div>
             </div>
 
@@ -1203,7 +1228,6 @@ func main() {
                   <line x1="0" y1="80" x2="700" y2="80" stroke="#1c273c" strokeWidth="1" />
                   <line x1="0" y1="30" x2="700" y2="30" stroke="#1c273c" strokeWidth="1" />
 
-                  {/* Gradient Area Fill */}
                   <defs>
                     <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
@@ -1241,62 +1265,23 @@ func main() {
                 </svg>
               </div>
             </div>
-
-            {/* Model Distribution Breakdown */}
-            <div className="card">
-              <div className="card-title">
-                <Sliders size={18} />
-                <span>Model Distribution Breakdown</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: '0.375rem' }}>
-                    <span style={{ fontWeight: 600 }}>Keepseed Instant (4o-Class)</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>2,989,578 tokens (62%)</span>
-                  </div>
-                  <div style={{ height: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', overflow: 'hidden' }}>
-                    <div style={{ width: '62%', height: '100%', background: '#3b82f6', borderRadius: '4px' }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: '0.375rem' }}>
-                    <span style={{ fontWeight: 600 }}>Keepseed Expert (o3/DeepThink)</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>1,350,132 tokens (28%)</span>
-                  </div>
-                  <div style={{ height: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', overflow: 'hidden' }}>
-                    <div style={{ width: '28%', height: '100%', background: '#8b5cf6', borderRadius: '4px' }} />
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: '0.375rem' }}>
-                    <span style={{ fontWeight: 600 }}>Keepseed Vision (Multimodal)</span>
-                    <span style={{ color: 'var(--text-secondary)' }}>482,190 tokens (10%)</span>
-                  </div>
-                  <div style={{ height: '8px', background: 'var(--bg-secondary)', borderRadius: '4px', overflow: 'hidden' }}>
-                    <div style={{ width: '10%', height: '100%', background: '#10b981', borderRadius: '4px' }} />
-                  </div>
-                </div>
-              </div>
-            </div>
           </div>
         )}
 
-        {/* 4. API KEYS TAB */}
+        {/* 4. API KEYS (SUB-KEYS) TAB */}
         {activeTab === 'api-keys' && (
           <div className="page-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
               <div>
-                <h1 className="page-title">API Secret Keys</h1>
-                <p className="page-subtitle">Create and manage secret credentials used to authenticate programmatic requests.</p>
+                <h1 className="page-title">Sub-Key Manager & Distribution</h1>
+                <p className="page-subtitle">Generate sub-keys for platform users with custom rate limits and dethrottling controls.</p>
               </div>
               <button 
                 onClick={() => setShowNewKeyModal(true)} 
                 className="btn btn-primary"
               >
                 <Plus size={16} />
-                <span>Create New Key</span>
+                <span>Generate User Sub-Key</span>
               </button>
             </div>
 
@@ -1304,10 +1289,10 @@ func main() {
               <div className="card" style={{ marginBottom: '1.5rem', background: 'rgba(16, 185, 129, 0.08)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#34d399', fontWeight: 600, marginBottom: '0.5rem' }}>
                   <ShieldCheck size={18} />
-                  <span>New API Key Generated Successfully</span>
+                  <span>New Sub-Key Generated Successfully</span>
                 </div>
                 <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-                  Please copy your secret key now. For security purposes, you will not be able to view it again.
+                  Please copy this key now. It proxies through the DeepSeek master distribution key at 2x token pricing.
                 </p>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input 
@@ -1340,9 +1325,9 @@ func main() {
                     <th>NAME</th>
                     <th>KEY PREFIX</th>
                     <th>CREATED</th>
-                    <th>LAST USED</th>
-                    <th>PERMISSIONS</th>
                     <th>RATE LIMIT</th>
+                    <th>TOKENS CONSUMED</th>
+                    <th>COST (2X)</th>
                     <th>STATUS</th>
                     <th style={{ textAlign: 'right' }}>ACTIONS</th>
                   </tr>
@@ -1353,11 +1338,9 @@ func main() {
                       <td style={{ fontWeight: 600 }}>{k.name}</td>
                       <td style={{ fontFamily: 'monospace', color: 'var(--text-secondary)' }}>{k.prefix}</td>
                       <td>{k.created}</td>
-                      <td>{k.lastUsed}</td>
-                      <td>
-                        <span className="badge badge-primary">{k.permissions}</span>
-                      </td>
-                      <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{k.rateLimitRpm || 5000} RPM</td>
+                      <td style={{ fontFamily: 'monospace' }}>{k.rateLimitRpm || 5000} RPM</td>
+                      <td>{(k.tokensConsumed || 0).toLocaleString()}</td>
+                      <td style={{ color: '#10b981', fontFamily: 'monospace' }}>${(k.costIncurred || 0).toFixed(2)}</td>
                       <td>
                         <span className={`badge ${k.status === 'Active' ? 'badge-success' : 'badge-muted'}`}>
                           {k.status}
@@ -1393,7 +1376,7 @@ func main() {
               <div className="modal-overlay">
                 <div className="modal-content">
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Create New Secret Key</h3>
+                    <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Generate User Sub-Key</h3>
                     <button 
                       onClick={() => setShowNewKeyModal(false)}
                       style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
@@ -1404,12 +1387,12 @@ func main() {
                   <form onSubmit={handleCreateApiKey}>
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
-                        Key Name / Identifier
+                        Key Name / User Identifier
                       </label>
                       <input 
                         type="text" 
                         required 
-                        placeholder="e.g. Production Cluster Service"
+                        placeholder="e.g. Client-App-Key"
                         value={newKeyName}
                         onChange={(e) => setNewKeyName(e.target.value)}
                         style={{ width: '100%', padding: '0.625rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', outline: 'none' }}
@@ -1417,20 +1400,20 @@ func main() {
                     </div>
                     <div style={{ marginBottom: '1rem' }}>
                       <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
-                        Access Permissions Scope
+                        Access Scope
                       </label>
                       <select 
                         value={newKeyPerms}
                         onChange={(e) => setNewKeyPerms(e.target.value as any)}
                         style={{ width: '100%', padding: '0.625rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', outline: 'none' }}
                       >
-                        <option value="Full Access">Full Access (Read & Write & Inference)</option>
-                        <option value="Read Only">Read Only (Analytics & Metrics)</option>
+                        <option value="Full Access">Full Access (DeepSeek-V3 & DeepSeek-R1)</option>
+                        <option value="Read Only">Read Only (Analytics)</option>
                       </select>
                     </div>
                     <div style={{ marginBottom: '1.5rem' }}>
                       <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
-                        RPM Rate Limit Quota
+                        RPM Rate Limit (with Dethrottling)
                       </label>
                       <input 
                         type="number"
@@ -1453,7 +1436,7 @@ func main() {
                         type="submit" 
                         className="btn btn-primary"
                       >
-                        Generate Secret Key
+                        Generate Sub-Key
                       </button>
                     </div>
                   </form>
@@ -1469,7 +1452,7 @@ func main() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
               <div>
                 <h1 className="page-title">Real-Time Request Tracing</h1>
-                <p className="page-subtitle">Inspect live HTTP invocations, payload sizes, token counts, and latency latencies.</p>
+                <p className="page-subtitle">Inspect live DeepSeek invocations, 2x billed amounts, and wholesale costs.</p>
               </div>
               <button onClick={refreshUserData} className="btn btn-secondary btn-sm">
                 <RefreshCw size={14} /> Refresh Logs
@@ -1495,12 +1478,12 @@ func main() {
                   <tr>
                     <th>REQUEST ID</th>
                     <th>TIMESTAMP</th>
-                    <th>ENDPOINT</th>
                     <th>MODEL</th>
+                    <th>UPSTREAM</th>
                     <th>STATUS</th>
                     <th>LATENCY</th>
                     <th>TOKENS</th>
-                    <th>COST</th>
+                    <th>BILLED (2X)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1512,8 +1495,8 @@ func main() {
                     >
                       <td style={{ fontFamily: 'monospace', color: '#60a5fa' }}>{log.id}</td>
                       <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(log.timestamp).toLocaleTimeString()}</td>
-                      <td style={{ fontFamily: 'monospace' }}>{log.endpoint}</td>
                       <td><span className="badge badge-primary">{log.model}</span></td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>{log.upstreamModel}</td>
                       <td><span className="badge badge-success">{log.status} OK</span></td>
                       <td style={{ fontFamily: 'monospace' }}>{log.latencyMs}ms</td>
                       <td>{log.tokens.total}</td>
@@ -1524,14 +1507,13 @@ func main() {
               </table>
             </div>
 
-            {/* Log Detail Modal */}
             {selectedLog && (
               <div className="modal-overlay">
                 <div className="modal-content" style={{ maxWidth: '640px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <Terminal size={18} color="#60a5fa" />
-                      <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Request Details: {selectedLog.id}</h3>
+                      <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>DeepSeek Trace: {selectedLog.id}</h3>
                     </div>
                     <button onClick={() => setSelectedLog(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
                       <X size={18} />
@@ -1540,8 +1522,8 @@ func main() {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
                     <div className="card" style={{ padding: '0.75rem' }}>
-                      <div style={{ color: 'var(--text-muted)' }}>Model</div>
-                      <div style={{ fontWeight: 600 }}>{selectedLog.model}</div>
+                      <div style={{ color: 'var(--text-muted)' }}>Upstream Model</div>
+                      <div style={{ fontWeight: 600 }}>{selectedLog.upstreamModel}</div>
                     </div>
                     <div className="card" style={{ padding: '0.75rem' }}>
                       <div style={{ color: 'var(--text-muted)' }}>Latency</div>
@@ -1552,8 +1534,8 @@ func main() {
                       <div style={{ fontWeight: 600 }}>{selectedLog.tokens.prompt} / {selectedLog.tokens.completion} ({selectedLog.tokens.total} total)</div>
                     </div>
                     <div className="card" style={{ padding: '0.75rem' }}>
-                      <div style={{ color: 'var(--text-muted)' }}>Estimated Cost</div>
-                      <div style={{ fontWeight: 600, color: '#10b981' }}>${selectedLog.cost.toFixed(5)}</div>
+                      <div style={{ color: 'var(--text-muted)' }}>Billed (2x) vs Wholesale</div>
+                      <div style={{ fontWeight: 600, color: '#10b981' }}>${selectedLog.cost.toFixed(5)} <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>(${selectedLog.wholesaleCost?.toFixed(5) || '0.00'})</span></div>
                     </div>
                   </div>
 
@@ -1578,7 +1560,7 @@ func main() {
           <div className="page-container" style={{ maxWidth: '680px' }}>
             <div className="page-header">
               <h1 className="page-title">Top Up Prepaid Credits</h1>
-              <p className="page-subtitle">Recharge your API credit balance for uninterrupted model inference & endpoint queries.</p>
+              <p className="page-subtitle">Recharge your API credit balance for DeepSeek inference & sub-key distribution.</p>
             </div>
 
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', background: 'var(--bg-secondary)', padding: '0.25rem', borderRadius: '8px', width: 'fit-content', border: '1px solid var(--border-color)' }}>
@@ -1796,18 +1778,6 @@ func main() {
                         </button>
                       </td>
                     </tr>
-                    <tr>
-                      <td style={{ fontFamily: 'monospace' }}>in_1P12zLDy28</td>
-                      <td>2026-07-01</td>
-                      <td>Pro Plan Monthly Subscription</td>
-                      <td>$49.00</td>
-                      <td><span className="badge badge-success">Paid</span></td>
-                      <td style={{ textAlign: 'right' }}>
-                        <button onClick={handleOpenCustomerPortal} className="btn btn-sm btn-secondary">
-                          <ExternalLink size={12} /> View PDF
-                        </button>
-                      </td>
-                    </tr>
                   </tbody>
                 </table>
               </div>
@@ -1826,7 +1796,7 @@ func main() {
 
             <h1 className="page-title">Developer Quickstart</h1>
             <p className="page-subtitle" style={{ marginBottom: '1.5rem' }}>
-              The Keepseed API follows modern OpenAI & Anthropic standards. Easily swap endpoints in existing SDK libraries with drop-in compatibility.
+              The Keepseed API proxies upstream DeepSeek models with 2x wholesale token pricing, sub-key rate limiting, and standard SDK compatibility.
             </p>
 
             <div className="table-wrapper" style={{ marginBottom: '2rem' }}>
@@ -1843,16 +1813,16 @@ func main() {
                     <td style={{ fontFamily: 'monospace', color: '#60a5fa' }}>https://api.keepseed.io/v1</td>
                   </tr>
                   <tr>
-                    <td style={{ fontWeight: 600 }}>Base URL (Anthropic Spec)</td>
-                    <td style={{ fontFamily: 'monospace', color: '#60a5fa' }}>https://api.keepseed.io/anthropic</td>
-                  </tr>
-                  <tr>
-                    <td style={{ fontWeight: 600 }}>Available Models</td>
-                    <td style={{ fontFamily: 'monospace' }}>keepseed-v4-instant, keepseed-v4-pro, keepseed-v4-vision</td>
+                    <td style={{ fontWeight: 600 }}>Supported Models</td>
+                    <td style={{ fontFamily: 'monospace' }}>deepseek-chat (DeepSeek-V3), deepseek-reasoner (DeepSeek-R1)</td>
                   </tr>
                   <tr>
                     <td style={{ fontWeight: 600 }}>Authentication</td>
-                    <td style={{ fontFamily: 'monospace' }}>Bearer ${'{KEEPSEED_API_KEY}'}</td>
+                    <td style={{ fontFamily: 'monospace' }}>Bearer ${'{KEEPSEED_SUB_KEY}'} (e.g. kp_live_...)</td>
+                  </tr>
+                  <tr>
+                    <td style={{ fontWeight: 600 }}>Token Pricing</td>
+                    <td style={{ color: '#10b981' }}>2.0x DeepSeek Wholesale ($0.54/1M input, $2.20/1M output for Chat)</td>
                   </tr>
                 </tbody>
               </table>
@@ -1923,12 +1893,12 @@ func main() {
           </div>
         )}
 
-        {/* 9. PRICING TAB */}
+        {/* 9. PRICING TAB (2X DEEPSEEK PRICING MODEL) */}
         {activeTab === 'pricing' && (
           <div className="page-container">
-            <div className="page-header" style={{ textAlign: 'center', maxWidth: '600px', margin: '0 auto 2.5rem' }}>
-              <h1 className="page-title">Predictable, Transparent Pricing</h1>
-              <p className="page-subtitle">Choose the subscription tier tailored for your workload with instant Stripe provisioning.</p>
+            <div className="page-header" style={{ textAlign: 'center', maxWidth: '650px', margin: '0 auto 2.5rem' }}>
+              <h1 className="page-title">Transparent 2x Token Model Pricing</h1>
+              <p className="page-subtitle">We charge exactly double the wholesale price of DeepSeek for API sub-key distribution, hosting, rate limiting, and dethrottled concurrency.</p>
 
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-secondary)', padding: '0.25rem', borderRadius: '9999px', border: '1px solid var(--border-color)', marginTop: '1.25rem' }}>
                 <button 
@@ -1936,7 +1906,7 @@ func main() {
                   className={`btn btn-sm ${billingCycle === 'monthly' ? 'btn-primary' : 'btn-secondary'}`}
                   style={{ borderRadius: '9999px', border: 'none' }}
                 >
-                  Monthly Billing
+                  Monthly Subscriptions
                 </button>
                 <button 
                   onClick={() => setBillingCycle('yearly')}
@@ -1945,6 +1915,43 @@ func main() {
                 >
                   Annual (Save 20%)
                 </button>
+              </div>
+            </div>
+
+            {/* Detailed 2x Token Pricing Comparison Table */}
+            <div className="card" style={{ marginBottom: '2.5rem' }}>
+              <div className="card-title" style={{ marginBottom: '1rem' }}>
+                <Tag size={18} />
+                <span>API Token Consumption Rates (2.0x DeepSeek Markup)</span>
+              </div>
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>MODEL</th>
+                      <th>UPSTREAM ENGINE</th>
+                      <th>INPUT TOKENS (PER 1M)</th>
+                      <th>OUTPUT TOKENS (PER 1M)</th>
+                      <th>DEEPSEEK BASE PRICE</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td style={{ fontWeight: 600, color: '#60a5fa' }}>deepseek-chat (DeepSeek-V3)</td>
+                      <td>Chat & Coding (671B MoE)</td>
+                      <td style={{ fontWeight: 700 }}>$0.54 USD</td>
+                      <td style={{ fontWeight: 700 }}>$2.20 USD</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>$0.27 / $1.10 (Wholesale)</td>
+                    </tr>
+                    <tr>
+                      <td style={{ fontWeight: 600, color: '#a78bfa' }}>deepseek-reasoner (DeepSeek-R1)</td>
+                      <td>Cognitive Chain-of-Thought</td>
+                      <td style={{ fontWeight: 700 }}>$1.10 USD</td>
+                      <td style={{ fontWeight: 700 }}>$4.38 USD</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>$0.55 / $2.19 (Wholesale)</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -1959,8 +1966,8 @@ func main() {
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000,000 monthly tokens</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Keepseed Instant model access</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 2,000,000 monthly token quota</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> DeepSeek-V3 model access</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> 1,000 Requests/min rate limit</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Standard community support</li>
                 </ul>
@@ -1985,9 +1992,9 @@ func main() {
                 </div>
 
                 <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000,000 monthly tokens</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Instant, Expert & Vision models</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> DeepThink reasoning effort</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000,000 monthly token quota</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> DeepSeek-V3 & DeepSeek-R1 access</li>
+                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Sub-key distribution & dethrottling</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> 10,000 Requests/min rate limit</li>
                   <li className="plan-feature-item"><Check size={16} color="#10b981" /> Priority email & chat support</li>
                 </ul>
@@ -2032,26 +2039,26 @@ func main() {
           <div className="page-container" style={{ maxWidth: '800px' }}>
             <div className="page-header">
               <h1 className="page-title">Help & Frequently Asked Questions</h1>
-              <p className="page-subtitle">Find answers regarding billing, Stripe checkouts, API keys, and model parameters.</p>
+              <p className="page-subtitle">Find answers regarding DeepSeek master keys, sub-keys, rate limits, and 2x pricing.</p>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '2rem' }}>
               {[
                 {
-                  q: 'How are prepaid credits deducted vs monthly subscriptions?',
-                  a: 'Monthly subscriptions provide an allocated bundle of tokens reset on every billing cycle. Prepaid top-up credits are drawn down only when you exceed your plan quota or consume pay-as-you-go API services.'
+                  q: 'How does the 2x DeepSeek token pricing model work?',
+                  a: 'Keepseed charges exactly double DeepSeek’s base wholesale rates ($0.54/$2.20 per 1M tokens for DeepSeek-V3 Chat, and $1.10/$4.38 per 1M tokens for DeepSeek-R1 Reasoner). This covers high-availability proxying, rate-limiting dethrottling queues, sub-key management, and Stripe billing infrastructure.'
                 },
                 {
-                  q: 'How do I download tax invoice receipts for accounting?',
-                  a: 'Navigate to the Billing section and click "Stripe Customer Portal". You can download official PDF receipts with your company tax ID, update billing address, or modify payment methods.'
+                  q: 'What happens when a free tier user reaches 50,000 tokens?',
+                  a: 'When a free account reaches 50,000 total tokens, the API gateway halts further requests with HTTP 402 Payment Required until prepaid credits are topped up or a paid subscription is activated.'
                 },
                 {
-                  q: 'Is Keepseed compatible with the official OpenAI and Anthropic Python/TypeScript SDKs?',
-                  a: 'Yes. Simply configure base_url to https://api.keepseed.io/v1 and pass your Keepseed API key. No special wrappers or dependencies are needed.'
+                  q: 'How do sub-keys work for API distribution?',
+                  a: 'Platform users generate unique sub-keys (kp_live_...). When clients send requests with a sub-key, Keepseed verifies their rate limits and quotas before proxying upstream to DeepSeek with the master distribution key.'
                 },
                 {
-                  q: 'What payment methods are supported via Stripe checkout?',
-                  a: 'We support Visa, Mastercard, American Express, Google Pay, Apple Pay, Link, and regional bank methods via Stripe Checkout.'
+                  q: 'How does dethrottling handle sudden traffic spikes?',
+                  a: 'Instead of immediately dropping burst traffic with HTTP 429, our dethrottling queue applies brief micro-second backoff delays to smooth out concurrency before forwarding to DeepSeek.'
                 }
               ].map((faq, i) => (
                 <div 
