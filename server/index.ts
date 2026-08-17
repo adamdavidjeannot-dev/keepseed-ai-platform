@@ -28,7 +28,6 @@ app.post('/api/webhooks', express.raw({ type: 'application/json' }), async (req:
 
   try {
     if (!sig || !webhookSecret) {
-      // For development fallback when webhook secret isn't configured yet
       event = JSON.parse(req.body.toString());
     } else {
       event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
@@ -149,7 +148,49 @@ app.post('/api/create-topup-checkout', async (req: Request, res: Response) => {
 });
 
 /**
- * 3. Create Self-Service Customer Portal Session (Invoices & Subscription Mgmt)
+ * 3. Programmatic API Top-Up Endpoint (/api/v1/topup)
+ * Allows SDKs, agents, and external applications to initiate or top up balance programmatically.
+ */
+app.post('/api/v1/topup', async (req: Request, res: Response) => {
+  try {
+    const { amount = 20, currency = 'usd', success_url, cancel_url } = req.body;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      line_items: [
+        {
+          price_data: {
+            currency: currency,
+            product_data: {
+              name: 'Programmatic API Credit Top-Up',
+              description: 'API-driven automated account balance top-up',
+            },
+            unit_amount: Math.round(amount * 100),
+          },
+          quantity: 1,
+        },
+      ],
+      automatic_tax: { enabled: process.env.ENABLE_AUTOMATIC_TAX === 'true' },
+      integration_identifier: 'keepseed_programmatic_topup_v1',
+      success_url: success_url || `${req.headers.origin || 'http://localhost:5173'}/top-up?success=true`,
+      cancel_url: cancel_url || `${req.headers.origin || 'http://localhost:5173'}/top-up`,
+    });
+
+    res.json({
+      status: 'success',
+      checkout_url: session.url,
+      session_id: session.id,
+      amount: amount,
+      currency: currency,
+    });
+  } catch (error: any) {
+    console.error('Error creating programmatic API top-up:', error);
+    res.status(500).json({ status: 'error', error: error.message });
+  }
+});
+
+/**
+ * 4. Create Self-Service Customer Portal Session (Invoices & Subscription Mgmt)
  */
 app.post('/api/create-portal-session', async (req: Request, res: Response) => {
   try {
