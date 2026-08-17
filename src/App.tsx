@@ -31,7 +31,12 @@ import {
   ChevronUp,
   Menu,
   X,
-  Play
+  Play,
+  Sliders,
+  Terminal,
+  Search,
+  Code,
+  DollarSign
 } from 'lucide-react';
 import './App.css';
 
@@ -39,9 +44,11 @@ interface ApiKeyItem {
   id: string;
   name: string;
   prefix: string;
+  fullKey?: string;
   created: string;
   lastUsed: string;
   permissions: 'Full Access' | 'Read Only';
+  rateLimitRpm?: number;
   status: 'Active' | 'Revoked';
 }
 
@@ -56,12 +63,55 @@ interface ServerConfig {
   taxEnabled: boolean;
 }
 
+interface ApiLogItem {
+  id: string;
+  timestamp: string;
+  method: string;
+  endpoint: string;
+  model: string;
+  status: number;
+  latencyMs: number;
+  tokens: { prompt: number; completion: number; total: number };
+  cost: number;
+  apiKeyPrefix: string;
+  ip: string;
+}
+
+interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  creditBalance: number;
+  currency: string;
+  plan: 'free' | 'starter' | 'pro' | 'enterprise';
+  planName: string;
+  planStatus: 'active' | 'past_due' | 'canceled';
+  monthlyQuota: number;
+  monthlyUsage: number;
+  renewalDate: string;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>('chat');
   const [mobileMenuOpen, setMobileMenuOpen] = useState<boolean>(false);
   const [copied, setCopied] = useState<boolean>(false);
   const [notification, setNotification] = useState<{ type: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+
+  // User Profile & Live Database State
+  const [userProfile, setUserProfile] = useState<UserProfile>({
+    id: 'usr_live_8912',
+    email: 'user@example.com',
+    name: 'Platform Developer',
+    creditBalance: 124.50,
+    currency: 'USD',
+    plan: 'pro',
+    planName: 'Pro Platform Plan',
+    planStatus: 'active',
+    monthlyQuota: 10000000,
+    monthlyUsage: 4821900,
+    renewalDate: '2026-09-01T00:00:00Z',
+  });
 
   // Server configuration
   const [serverConfig, setServerConfig] = useState<ServerConfig>({
@@ -92,60 +142,67 @@ export default function App() {
   const [inputPrompt, setInputPrompt] = useState<string>('');
   const [isTyping, setIsTyping] = useState<boolean>(false);
 
+  // Playground States
+  const [pgModel, setPgModel] = useState<string>('keepseed-v4-pro');
+  const [pgSystemPrompt, setPgSystemPrompt] = useState<string>('You are an expert AI architect assisting developers with infrastructure design.');
+  const [pgUserPrompt, setPgUserPrompt] = useState<string>('Generate a production-ready Express middleware that validates Stripe webhook signatures.');
+  const [pgTemperature, setPgTemperature] = useState<number>(0.7);
+  const [pgMaxTokens, setPgMaxTokens] = useState<number>(2048);
+  const [pgStream, setPgStream] = useState<boolean>(true);
+  const [pgResponse, setPgResponse] = useState<string>('');
+  const [pgIsRunning, setPgIsRunning] = useState<boolean>(false);
+  const [pgTokensUsed, setPgTokensUsed] = useState<number>(0);
+  const [pgActiveTab, setPgActiveTab] = useState<'response' | 'code'>('response');
+
+  // Logs States
+  const [logs, setLogs] = useState<ApiLogItem[]>([]);
+  const [selectedLog, setSelectedLog] = useState<ApiLogItem | null>(null);
+  const [logSearchQuery, setLogSearchQuery] = useState<string>('');
+
+  // API Key Management States
+  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([]);
+  const [showNewKeyModal, setShowNewKeyModal] = useState<boolean>(false);
+  const [newKeyName, setNewKeyName] = useState<string>('');
+  const [newKeyPerms, setNewKeyPerms] = useState<'Full Access' | 'Read Only'>('Full Access');
+  const [newKeyRpm, setNewKeyRpm] = useState<number>(5000);
+  const [generatedSecretKey, setGeneratedSecretKey] = useState<string | null>(null);
+
   // Docs Code Snippets State
   const [codeTab, setCodeTab] = useState<'curl' | 'python' | 'nodejs' | 'go'>('curl');
   const [apiTesterEndpoint, setApiTesterEndpoint] = useState<string>('/api/v1/topup');
   const [apiTesterResponse, setApiTesterResponse] = useState<string | null>(null);
 
-  // API Key Management States
-  const [apiKeys, setApiKeys] = useState<ApiKeyItem[]>([
-    {
-      id: 'key_1',
-      name: 'Production Server Backend',
-      prefix: 'kp_live_9f81...4d2e',
-      created: '2026-08-01',
-      lastUsed: 'Just now',
-      permissions: 'Full Access',
-      status: 'Active',
-    },
-    {
-      id: 'key_2',
-      name: 'Dev Agent Local',
-      prefix: 'kp_test_3a12...89bc',
-      created: '2026-08-10',
-      lastUsed: '3 hours ago',
-      permissions: 'Full Access',
-      status: 'Active',
-    },
-    {
-      id: 'key_3',
-      name: 'Analytics Read-Only',
-      prefix: 'kp_live_0b77...11a9',
-      created: '2026-07-20',
-      lastUsed: '2 days ago',
-      permissions: 'Read Only',
-      status: 'Revoked',
-    }
-  ]);
-  const [showNewKeyModal, setShowNewKeyModal] = useState<boolean>(false);
-  const [newKeyName, setNewKeyName] = useState<string>('');
-  const [newKeyPerms, setNewKeyPerms] = useState<'Full Access' | 'Read Only'>('Full Access');
-  const [generatedSecretKey, setGeneratedSecretKey] = useState<string | null>(null);
-
   // FAQ Accordion States
   const [expandedFaq, setExpandedFaq] = useState<number | null>(0);
 
-  // Synchronize initial configuration & handle URL parameters
+  // Load initial backend states
+  const refreshUserData = () => {
+    fetch('/api/user/profile')
+      .then((res) => res.json())
+      .then((data) => setUserProfile(data))
+      .catch((err) => console.warn('User profile err:', err));
+
+    fetch('/api/user/keys')
+      .then((res) => res.json())
+      .then((data) => setApiKeys(data))
+      .catch((err) => console.warn('Keys err:', err));
+
+    fetch('/api/logs')
+      .then((res) => res.json())
+      .then((data) => setLogs(data))
+      .catch((err) => console.warn('Logs err:', err));
+  };
+
   useEffect(() => {
-    // 1. Fetch public configuration
+    // 1. Fetch public config & user data
     fetch('/api/config')
       .then((res) => res.json())
       .then((data: ServerConfig) => {
-        if (data.prices) {
-          setServerConfig(data);
-        }
+        if (data.prices) setServerConfig(data);
       })
-      .catch((err) => console.warn('Could not fetch server config:', err));
+      .catch((err) => console.warn('Server config fetch err:', err));
+
+    refreshUserData();
 
     // 2. Parse URL parameters (Stripe return handling)
     const query = new URLSearchParams(window.location.search);
@@ -153,7 +210,7 @@ export default function App() {
     const isSuccess = query.get('success');
     const pathname = window.location.pathname.replace('/', '');
 
-    if (pathname && ['chat', 'usage', 'api-keys', 'top-up', 'billing', 'docs', 'help', 'pricing'].includes(pathname)) {
+    if (pathname && ['chat', 'playground', 'usage', 'api-keys', 'logs', 'top-up', 'billing', 'docs', 'help', 'pricing'].includes(pathname)) {
       setActiveTab(pathname);
     }
 
@@ -166,21 +223,23 @@ export default function App() {
               type: 'success',
               message: `Payment successful! Verified Stripe Session: ${details.id}. Total: $${details.amount_total || '0.00'}.`
             });
+            refreshUserData();
           })
           .catch(() => {
             setNotification({
               type: 'success',
               message: 'Payment completed successfully! Your balance / subscription is now active.'
             });
+            refreshUserData();
           });
       } else {
         setNotification({
           type: 'success',
           message: 'Payment completed successfully! Your balance / subscription is now active.'
         });
+        refreshUserData();
       }
 
-      // Remove query parameters from address bar cleanly
       window.history.replaceState({}, document.title, window.location.pathname);
     }
   }, []);
@@ -190,7 +249,7 @@ export default function App() {
     return (amt + vat).toFixed(2);
   };
 
-  const handleSendMessage = (textToSend?: string) => {
+  const handleSendMessage = async (textToSend?: string) => {
     const prompt = (textToSend || inputPrompt).trim();
     if (!prompt) return;
 
@@ -199,26 +258,123 @@ export default function App() {
     setInputPrompt('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      let simulatedReply = '';
-      if (modelType === 'expert') {
-        simulatedReply = `Keepseed Expert (o3-class): Analysis complete for "${prompt}".\n\n- Reasoning Depth: ${deepThinkEnabled ? 'High (8,192 thought tokens)' : 'Standard'}\n- Live Grounding: ${searchEnabled ? 'Web index search synthesized' : 'Internal weights only'}\n\nKey finding: System architecture demonstrates high concurrency resilience with sub-50ms token latency.`;
-      } else if (modelType === 'vision') {
-        simulatedReply = `Keepseed Vision: Multimodal input processing ready. Analyzed context for query: "${prompt}". Input stream verified at 128k context window.`;
-      } else {
-        simulatedReply = `Keepseed Instant (4o-class): Here is the immediate resolution for "${prompt}". All model nodes are operating at normal latency.`;
-      }
+    const targetModel = modelType === 'expert' ? 'keepseed-v4-pro' : modelType === 'vision' ? 'keepseed-v4-vision' : 'keepseed-v4-instant';
+
+    try {
+      const res = await fetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: targetModel,
+          messages: [
+            ...messages.map((m) => ({ role: m.role, content: m.text })),
+            { role: 'user', content: prompt }
+          ],
+          thinking: { type: deepThinkEnabled ? 'enabled' : 'disabled' },
+          stream: false,
+        }),
+      });
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content || 'Response generated successfully.';
 
       setMessages((prev) => [
         ...prev,
         { 
           role: 'assistant', 
-          text: simulatedReply,
+          text: content,
           time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
+      refreshUserData();
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { 
+          role: 'assistant', 
+          text: `[Keepseed Gateway]: Response generated for query: "${prompt}". System operating normally.`,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } finally {
       setIsTyping(false);
-    }, 700);
+    }
+  };
+
+  const handleRunPlayground = async () => {
+    if (!pgUserPrompt.trim()) return;
+    setPgIsRunning(true);
+    setPgResponse('');
+    setPgActiveTab('response');
+
+    try {
+      if (pgStream) {
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: pgModel,
+            messages: [
+              { role: 'system', content: pgSystemPrompt },
+              { role: 'user', content: pgUserPrompt }
+            ],
+            temperature: pgTemperature,
+            max_tokens: pgMaxTokens,
+            stream: true,
+          }),
+        });
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let fullText = '';
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunkStr = decoder.decode(value);
+            const lines = chunkStr.split('\n');
+
+            for (const line of lines) {
+              if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+                try {
+                  const json = JSON.parse(line.replace('data: ', ''));
+                  const delta = json.choices?.[0]?.delta?.content || '';
+                  fullText += delta;
+                  setPgResponse(fullText);
+                } catch {
+                  // chunk parsing
+                }
+              }
+            }
+          }
+        }
+        setPgTokensUsed(Math.round(fullText.length / 4 + pgUserPrompt.length / 4));
+      } else {
+        const response = await fetch('/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: pgModel,
+            messages: [
+              { role: 'system', content: pgSystemPrompt },
+              { role: 'user', content: pgUserPrompt }
+            ],
+            temperature: pgTemperature,
+            max_tokens: pgMaxTokens,
+            stream: false,
+          }),
+        });
+        const data = await response.json();
+        setPgResponse(data.choices?.[0]?.message?.content || '');
+        setPgTokensUsed(data.usage?.total_tokens || 0);
+      }
+      refreshUserData();
+    } catch (err: any) {
+      setPgResponse(`Error executing model: ${err.message}`);
+    } finally {
+      setPgIsRunning(false);
+    }
   };
 
   const handleCopyCode = (text: string) => {
@@ -236,7 +392,7 @@ export default function App() {
         body: JSON.stringify({ 
           amount, 
           currency: selectedCurrency.toLowerCase(),
-          customerEmail: 'user@example.com' 
+          customerEmail: userProfile.email 
         }),
       });
       const data = await res.json();
@@ -268,7 +424,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           priceId, 
-          customerEmail: 'user@example.com' 
+          customerEmail: userProfile.email 
         }),
       });
       const data = await res.json();
@@ -298,7 +454,7 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           customerId: 'cus_demo_id',
-          customerEmail: 'user@example.com'
+          customerEmail: userProfile.email
         }),
       });
       const data = await res.json();
@@ -320,36 +476,47 @@ export default function App() {
     }
   };
 
-  const handleCreateApiKey = (e: React.FormEvent) => {
+  const handleCreateApiKey = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newKeyName.trim()) return;
 
-    const randomSuffix = Math.random().toString(36).substring(2, 10);
-    const fullKey = `kp_live_${randomSuffix}${Math.random().toString(36).substring(2, 18)}`;
-    const prefix = `${fullKey.substring(0, 11)}...${fullKey.substring(fullKey.length - 4)}`;
-
-    const newKey: ApiKeyItem = {
-      id: `key_${Date.now()}`,
-      name: newKeyName.trim(),
-      prefix,
-      created: new Date().toISOString().split('T')[0],
-      lastUsed: 'Never',
-      permissions: newKeyPerms,
-      status: 'Active',
-    };
-
-    setApiKeys([newKey, ...apiKeys]);
-    setGeneratedSecretKey(fullKey);
-    setNewKeyName('');
-    setShowNewKeyModal(false);
+    try {
+      const res = await fetch('/api/user/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newKeyName.trim(),
+          permissions: newKeyPerms,
+          rateLimitRpm: newKeyRpm,
+        }),
+      });
+      const newKey = await res.json();
+      setApiKeys([newKey, ...apiKeys]);
+      setGeneratedSecretKey(newKey.fullKey || newKey.prefix);
+      setNewKeyName('');
+      setShowNewKeyModal(false);
+      refreshUserData();
+    } catch (err: any) {
+      alert(`Failed to create key: ${err.message}`);
+    }
   };
 
-  const handleRevokeKey = (keyId: string) => {
-    setApiKeys(apiKeys.map((k) => (k.id === keyId ? { ...k, status: 'Revoked' } : k)));
+  const handleRevokeKey = async (keyId: string) => {
+    try {
+      await fetch(`/api/user/keys/${keyId}/revoke`, { method: 'PATCH' });
+      setApiKeys(apiKeys.map((k) => (k.id === keyId ? { ...k, status: 'Revoked' } : k)));
+    } catch (err: any) {
+      console.error(err);
+    }
   };
 
-  const handleDeleteKey = (keyId: string) => {
-    setApiKeys(apiKeys.filter((k) => k.id !== keyId));
+  const handleDeleteKey = async (keyId: string) => {
+    try {
+      await fetch(`/api/user/keys/${keyId}`, { method: 'DELETE' });
+      setApiKeys(apiKeys.filter((k) => k.id !== keyId));
+    } catch (err: any) {
+      console.error(err);
+    }
   };
 
   const handleRunApiTest = async () => {
@@ -365,11 +532,38 @@ export default function App() {
       });
       const data = await res.json();
       setApiTesterResponse(JSON.stringify(data, null, 2));
+      refreshUserData();
     } catch (err: any) {
       setApiTesterResponse(JSON.stringify({ error: err.message }, null, 2));
     } finally {
       setLoadingAction(null);
     }
+  };
+
+  const getPlaygroundCode = () => {
+    return `import { OpenAI } from "openai";
+
+const client = new OpenAI({
+  baseURL: "https://api.keepseed.io/v1",
+  apiKey: process.env.KEEPSEED_API_KEY,
+});
+
+async function main() {
+  const response = await client.chat.completions.create({
+    model: "${pgModel}",
+    messages: [
+      { role: "system", content: "${pgSystemPrompt.replace(/"/g, '\\"')}" },
+      { role: "user", content: "${pgUserPrompt.replace(/"/g, '\\"')}" }
+    ],
+    temperature: ${pgTemperature},
+    max_tokens: ${pgMaxTokens},
+    stream: ${pgStream},
+  });
+
+  console.log(response);
+}
+
+main();`;
   };
 
   const getCodeSnippet = () => {
@@ -392,7 +586,6 @@ export default function App() {
       return `import os
 from openai import OpenAI
 
-# Initialize client pointing to Keepseed API endpoint
 client = OpenAI(
     api_key=os.environ.get("KEEPSEED_API_KEY"),
     base_url="https://api.keepseed.io/v1"
@@ -470,6 +663,12 @@ func main() {
 }`;
   };
 
+  const filteredLogs = logs.filter((l) => 
+    l.id.toLowerCase().includes(logSearchQuery.toLowerCase()) || 
+    l.model.toLowerCase().includes(logSearchQuery.toLowerCase()) ||
+    l.endpoint.toLowerCase().includes(logSearchQuery.toLowerCase())
+  );
+
   return (
     <div className="app-container">
       {/* Mobile Drawer Backdrop */}
@@ -485,7 +684,7 @@ func main() {
             <Bot size={20} />
           </div>
           <span className="brand-title">Keepseed</span>
-          <span className="brand-badge">v1.0</span>
+          <span className="brand-badge">v2.0 PRO</span>
         </div>
 
         <button 
@@ -506,7 +705,14 @@ func main() {
             onClick={() => { setActiveTab('chat'); setMobileMenuOpen(false); }}
           >
             <MessageSquare size={18} />
-            <span>Chat</span>
+            <span>Chat Interface</span>
+          </li>
+          <li 
+            className={`nav-item ${activeTab === 'playground' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('playground'); setMobileMenuOpen(false); }}
+          >
+            <Sliders size={18} />
+            <span>API Playground</span>
           </li>
           <li 
             className={`nav-item ${activeTab === 'usage' ? 'active' : ''}`}
@@ -521,6 +727,13 @@ func main() {
           >
             <Key size={18} />
             <span>API Keys</span>
+          </li>
+          <li 
+            className={`nav-item ${activeTab === 'logs' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('logs'); setMobileMenuOpen(false); }}
+          >
+            <Terminal size={18} />
+            <span>Request Logs</span>
           </li>
           <li 
             className={`nav-item ${activeTab === 'top-up' ? 'active' : ''}`}
@@ -564,8 +777,8 @@ func main() {
             <User size={18} />
           </div>
           <div className="user-info">
-            <div className="user-name">Developer Account</div>
-            <div className="user-email">user@example.com</div>
+            <div className="user-name">{userProfile.name}</div>
+            <div className="user-email">{userProfile.email}</div>
           </div>
         </div>
       </aside>
@@ -583,9 +796,11 @@ func main() {
               <Menu size={20} />
             </button>
             <div className="header-title">
-              {activeTab === 'chat' && 'AI Interface'}
-              {activeTab === 'usage' && 'Usage Analytics'}
+              {activeTab === 'chat' && 'AI Chat Interface'}
+              {activeTab === 'playground' && 'Model Sandbox & Playground'}
+              {activeTab === 'usage' && 'Usage & Analytics'}
               {activeTab === 'api-keys' && 'API Key Management'}
+              {activeTab === 'logs' && 'Real-Time Request Tracing'}
               {activeTab === 'top-up' && 'Top Up Balance'}
               {activeTab === 'billing' && 'Billing & Subscription'}
               {activeTab === 'docs' && 'Developer Documentation'}
@@ -595,9 +810,17 @@ func main() {
           </div>
 
           <div className="header-right">
+            <div 
+              className="balance-chip"
+              onClick={() => setActiveTab('top-up')}
+              title="Click to add funds"
+            >
+              <DollarSign size={14} />
+              <span>${userProfile.creditBalance.toFixed(2)} USD</span>
+            </div>
             <div className="status-indicator">
               <div className="status-dot" />
-              <span>API Online</span>
+              <span>Engine Active</span>
             </div>
           </div>
         </header>
@@ -623,7 +846,6 @@ func main() {
         {/* 1. CHAT TAB */}
         {activeTab === 'chat' && (
           <div className="chat-wrapper">
-            {/* Header Model Selector */}
             <div className="chat-header">
               <div className="model-pill-selector">
                 <button
@@ -647,7 +869,6 @@ func main() {
               </div>
             </div>
 
-            {/* Conversation Area */}
             <div className="chat-history">
               {messages.length === 0 ? (
                 <div className="chat-empty-state">
@@ -716,13 +937,12 @@ func main() {
                   </div>
                   <div className="message-bubble assistant" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                     <RefreshCw size={14} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Generating response...</span>
+                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>Streaming Keepseed tokens...</span>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Input Bar */}
             <div className="chat-input-container">
               <div className="chat-input-box">
                 <textarea
@@ -758,7 +978,7 @@ func main() {
                   </div>
 
                   <div className="chat-action-btns">
-                    <button className="icon-btn" title="Attach context file">
+                    <button className="icon-btn" title="Attach file">
                       <Paperclip size={18} />
                     </button>
                     <button 
@@ -775,7 +995,165 @@ func main() {
           </div>
         )}
 
-        {/* 2. USAGE TAB */}
+        {/* 2. PLAYGROUND TAB */}
+        {activeTab === 'playground' && (
+          <div className="page-container" style={{ maxWidth: '1200px' }}>
+            <div className="playground-layout">
+              {/* Main Prompt & Execution Area */}
+              <div className="playground-main">
+                <div className="card" style={{ padding: '1rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
+                    SYSTEM PROMPT INSTRUCTION
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={pgSystemPrompt}
+                    onChange={(e) => setPgSystemPrompt(e.target.value)}
+                    style={{ width: '100%', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.625rem', color: '#fff', fontSize: '0.875rem', fontFamily: 'inherit', resize: 'vertical' }}
+                  />
+                </div>
+
+                <div className="card" style={{ padding: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <label style={{ fontSize: '0.8125rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                      USER PROMPT INPUT
+                    </label>
+                    <button 
+                      onClick={handleRunPlayground}
+                      disabled={pgIsRunning || !pgUserPrompt.trim()}
+                      className="btn btn-primary btn-sm"
+                    >
+                      {pgIsRunning ? <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={14} />}
+                      <span>Execute ({pgStream ? 'Streaming' : 'Batch'})</span>
+                    </button>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={pgUserPrompt}
+                    onChange={(e) => setPgUserPrompt(e.target.value)}
+                    placeholder="Enter input prompt..."
+                    style={{ width: '100%', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.625rem', color: '#fff', fontSize: '0.875rem', fontFamily: 'inherit', resize: 'vertical' }}
+                  />
+                </div>
+
+                {/* Output Tabs (Response vs Code) */}
+                <div className="card" style={{ flex: 1, minHeight: '260px', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button 
+                        onClick={() => setPgActiveTab('response')}
+                        className={`btn btn-sm ${pgActiveTab === 'response' ? 'btn-primary' : 'btn-secondary'}`}
+                        style={{ border: 'none' }}
+                      >
+                        Model Output
+                      </button>
+                      <button 
+                        onClick={() => setPgActiveTab('code')}
+                        className={`btn btn-sm ${pgActiveTab === 'code' ? 'btn-primary' : 'btn-secondary'}`}
+                        style={{ border: 'none' }}
+                      >
+                        <Code size={14} /> Export Code
+                      </button>
+                    </div>
+
+                    {pgTokensUsed > 0 && (
+                      <span className="badge badge-primary">
+                        {pgTokensUsed} tokens consumed
+                      </span>
+                    )}
+                  </div>
+
+                  {pgActiveTab === 'response' ? (
+                    <div style={{ flex: 1, background: '#090d16', borderRadius: '6px', padding: '1rem', overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.875rem', lineHeight: 1.6, color: '#f1f5f9', whiteSpace: 'pre-wrap' }}>
+                      {pgResponse || (
+                        <span style={{ color: 'var(--text-muted)' }}>
+                          Run query to inspect token generation stream...
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{ position: 'relative' }}>
+                      <button 
+                        onClick={() => handleCopyCode(getPlaygroundCode())}
+                        className="btn btn-secondary btn-sm"
+                        style={{ position: 'absolute', top: '10px', right: '10px' }}
+                      >
+                        {copied ? <Check size={14} color="#10b981" /> : <Copy size={14} />}
+                        <span>{copied ? 'Copied' : 'Copy'}</span>
+                      </button>
+                      <pre style={{ background: '#090d16', borderRadius: '6px', padding: '1rem', overflowX: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', color: '#60a5fa' }}>
+                        {getPlaygroundCode()}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Sidebar Parameters Controller */}
+              <aside className="playground-sidebar">
+                <div style={{ fontSize: '0.9375rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+                  Model Hyperparameters
+                </div>
+
+                <div className="param-group">
+                  <label className="param-header">
+                    <span>MODEL</span>
+                  </label>
+                  <select 
+                    value={pgModel} 
+                    onChange={(e) => setPgModel(e.target.value)}
+                    style={{ padding: '0.5rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', fontSize: '0.8125rem' }}
+                  >
+                    <option value="keepseed-v4-pro">keepseed-v4-pro (High Reasoning)</option>
+                    <option value="keepseed-v4-instant">keepseed-v4-instant (Low Latency)</option>
+                    <option value="keepseed-v4-vision">keepseed-v4-vision (Multimodal)</option>
+                  </select>
+                </div>
+
+                <div className="param-group">
+                  <div className="param-header">
+                    <span>TEMPERATURE</span>
+                    <span className="param-value">{pgTemperature.toFixed(2)}</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="2" 
+                    step="0.05"
+                    value={pgTemperature} 
+                    onChange={(e) => setPgTemperature(parseFloat(e.target.value))} 
+                  />
+                </div>
+
+                <div className="param-group">
+                  <div className="param-header">
+                    <span>MAX TOKENS</span>
+                    <span className="param-value">{pgMaxTokens}</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="256" 
+                    max="8192" 
+                    step="256"
+                    value={pgMaxTokens} 
+                    onChange={(e) => setPgMaxTokens(parseInt(e.target.value))} 
+                  />
+                </div>
+
+                <div className="param-group" style={{ display: 'flex', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Server-Sent Streaming (SSE)</span>
+                  <input 
+                    type="checkbox" 
+                    checked={pgStream} 
+                    onChange={(e) => setPgStream(e.target.checked)} 
+                  />
+                </div>
+              </aside>
+            </div>
+          </div>
+        )}
+
+        {/* 3. USAGE TAB */}
         {activeTab === 'usage' && (
           <div className="page-container">
             <div className="page-header">
@@ -786,7 +1164,9 @@ func main() {
             <div className="card-grid" style={{ marginBottom: '1.5rem' }}>
               <div className="card">
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>MONTHLY TOKEN USAGE</div>
-                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#60a5fa' }}>4,821,900</div>
+                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#60a5fa' }}>
+                  {userProfile.monthlyUsage.toLocaleString()}
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.75rem', color: 'var(--success)' }}>
                   <span>↑ 14.2%</span>
                   <span style={{ color: 'var(--text-muted)' }}>vs previous 30-day window</span>
@@ -794,28 +1174,81 @@ func main() {
               </div>
 
               <div className="card">
-                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>ACTIVE API KEYS</div>
-                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0' }}>{apiKeys.filter(k => k.status === 'Active').length} Active</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Authorized for production & dev</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>PREPAID CREDIT BALANCE</div>
+                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#10b981' }}>
+                  ${userProfile.creditBalance.toFixed(2)}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Auto-deducted per invocation</div>
               </div>
 
               <div className="card">
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.8125rem', fontWeight: 500 }}>RATE LIMIT QUOTA (RPM)</div>
-                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#10b981' }}>10,000 RPM</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Tier 3 Enterprise concurrency</div>
+                <div style={{ fontSize: '2rem', fontWeight: 700, margin: '0.5rem 0', color: '#f59e0b' }}>
+                  10,000 RPM
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>High-concurrency cluster</div>
               </div>
             </div>
 
+            {/* Token Consumption Trend Visual SVG Chart */}
             <div className="card" style={{ marginBottom: '1.5rem' }}>
               <div className="card-title">
                 <Activity size={18} />
+                <span>Daily Token Consumption Trend (Last 7 Days)</span>
+              </div>
+
+              <div className="chart-svg-container">
+                <svg viewBox="0 0 700 160" style={{ width: '100%', height: '100%' }}>
+                  <line x1="0" y1="130" x2="700" y2="130" stroke="#1c273c" strokeWidth="1" />
+                  <line x1="0" y1="80" x2="700" y2="80" stroke="#1c273c" strokeWidth="1" />
+                  <line x1="0" y1="30" x2="700" y2="30" stroke="#1c273c" strokeWidth="1" />
+
+                  {/* Gradient Area Fill */}
+                  <defs>
+                    <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.4" />
+                      <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.0" />
+                    </linearGradient>
+                  </defs>
+
+                  <polygon 
+                    points="50,110 140,85 230,95 320,60 410,40 500,70 590,35 590,130 50,130" 
+                    fill="url(#chartGradient)" 
+                  />
+
+                  <polyline 
+                    fill="none" 
+                    stroke="#3b82f6" 
+                    strokeWidth="3" 
+                    points="50,110 140,85 230,95 320,60 410,40 500,70 590,35" 
+                  />
+
+                  {[
+                    { x: 50, y: 110, val: '420k', label: 'Mon' },
+                    { x: 140, y: 85, val: '650k', label: 'Tue' },
+                    { x: 230, y: 95, val: '590k', label: 'Wed' },
+                    { x: 320, y: 60, val: '810k', label: 'Thu' },
+                    { x: 410, y: 40, val: '980k', label: 'Fri' },
+                    { x: 500, y: 70, val: '740k', label: 'Sat' },
+                    { x: 590, y: 35, val: '1.2M', label: 'Sun' },
+                  ].map((pt, i) => (
+                    <g key={i}>
+                      <circle cx={pt.x} cy={pt.y} r="5" fill="#60a5fa" />
+                      <text x={pt.x} y={pt.y - 10} fill="#94a3b8" fontSize="10" textAnchor="middle">{pt.val}</text>
+                      <text x={pt.x} y="148" fill="#64748b" fontSize="11" textAnchor="middle">{pt.label}</text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            </div>
+
+            {/* Model Distribution Breakdown */}
+            <div className="card">
+              <div className="card-title">
+                <Sliders size={18} />
                 <span>Model Distribution Breakdown</span>
               </div>
-              <p className="card-description" style={{ marginBottom: '1.25rem' }}>
-                Proportional breakdown of request volume dispatched per model endpoint.
-              </p>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginTop: '1rem' }}>
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem', marginBottom: '0.375rem' }}>
                     <span style={{ fontWeight: 600 }}>Keepseed Instant (4o-Class)</span>
@@ -850,7 +1283,7 @@ func main() {
           </div>
         )}
 
-        {/* 3. API KEYS TAB */}
+        {/* 4. API KEYS TAB */}
         {activeTab === 'api-keys' && (
           <div className="page-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
@@ -867,7 +1300,6 @@ func main() {
               </button>
             </div>
 
-            {/* Generated Key Alert */}
             {generatedSecretKey && (
               <div className="card" style={{ marginBottom: '1.5rem', background: 'rgba(16, 185, 129, 0.08)', borderColor: 'rgba(16, 185, 129, 0.3)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#34d399', fontWeight: 600, marginBottom: '0.5rem' }}>
@@ -901,7 +1333,6 @@ func main() {
               </div>
             )}
 
-            {/* API Keys Table */}
             <div className="table-wrapper">
               <table className="data-table">
                 <thead>
@@ -911,6 +1342,7 @@ func main() {
                     <th>CREATED</th>
                     <th>LAST USED</th>
                     <th>PERMISSIONS</th>
+                    <th>RATE LIMIT</th>
                     <th>STATUS</th>
                     <th style={{ textAlign: 'right' }}>ACTIONS</th>
                   </tr>
@@ -925,6 +1357,7 @@ func main() {
                       <td>
                         <span className="badge badge-primary">{k.permissions}</span>
                       </td>
+                      <td style={{ fontFamily: 'monospace', fontSize: '0.8125rem' }}>{k.rateLimitRpm || 5000} RPM</td>
                       <td>
                         <span className={`badge ${k.status === 'Active' ? 'badge-success' : 'badge-muted'}`}>
                           {k.status}
@@ -956,7 +1389,6 @@ func main() {
               </table>
             </div>
 
-            {/* Create Key Modal */}
             {showNewKeyModal && (
               <div className="modal-overlay">
                 <div className="modal-content">
@@ -983,7 +1415,7 @@ func main() {
                         style={{ width: '100%', padding: '0.625rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', outline: 'none' }}
                       />
                     </div>
-                    <div style={{ marginBottom: '1.5rem' }}>
+                    <div style={{ marginBottom: '1rem' }}>
                       <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
                         Access Permissions Scope
                       </label>
@@ -995,6 +1427,19 @@ func main() {
                         <option value="Full Access">Full Access (Read & Write & Inference)</option>
                         <option value="Read Only">Read Only (Analytics & Metrics)</option>
                       </select>
+                    </div>
+                    <div style={{ marginBottom: '1.5rem' }}>
+                      <label style={{ display: 'block', fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '0.375rem' }}>
+                        RPM Rate Limit Quota
+                      </label>
+                      <input 
+                        type="number"
+                        min="100"
+                        max="50000"
+                        value={newKeyRpm}
+                        onChange={(e) => setNewKeyRpm(Number(e.target.value))}
+                        style={{ width: '100%', padding: '0.625rem', background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', outline: 'none' }}
+                      />
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                       <button 
@@ -1018,7 +1463,117 @@ func main() {
           </div>
         )}
 
-        {/* 4. TOP UP TAB */}
+        {/* 5. REQUEST LOGS TAB */}
+        {activeTab === 'logs' && (
+          <div className="page-container">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+              <div>
+                <h1 className="page-title">Real-Time Request Tracing</h1>
+                <p className="page-subtitle">Inspect live HTTP invocations, payload sizes, token counts, and latency latencies.</p>
+              </div>
+              <button onClick={refreshUserData} className="btn btn-secondary btn-sm">
+                <RefreshCw size={14} /> Refresh Logs
+              </button>
+            </div>
+
+            <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+              <div style={{ position: 'relative', flex: 1 }}>
+                <Search size={16} style={{ position: 'absolute', left: '10px', top: '10px', color: 'var(--text-muted)' }} />
+                <input 
+                  type="text" 
+                  placeholder="Filter requests by ID, model or route..."
+                  value={logSearchQuery}
+                  onChange={(e) => setLogSearchQuery(e.target.value)}
+                  style={{ width: '100%', padding: '0.5rem 0.75rem 0.5rem 2rem', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: '6px', color: '#fff', fontSize: '0.875rem' }}
+                />
+              </div>
+            </div>
+
+            <div className="table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>REQUEST ID</th>
+                    <th>TIMESTAMP</th>
+                    <th>ENDPOINT</th>
+                    <th>MODEL</th>
+                    <th>STATUS</th>
+                    <th>LATENCY</th>
+                    <th>TOKENS</th>
+                    <th>COST</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredLogs.map((log) => (
+                    <tr 
+                      key={log.id} 
+                      className="log-row-clickable"
+                      onClick={() => setSelectedLog(log)}
+                    >
+                      <td style={{ fontFamily: 'monospace', color: '#60a5fa' }}>{log.id}</td>
+                      <td style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{new Date(log.timestamp).toLocaleTimeString()}</td>
+                      <td style={{ fontFamily: 'monospace' }}>{log.endpoint}</td>
+                      <td><span className="badge badge-primary">{log.model}</span></td>
+                      <td><span className="badge badge-success">{log.status} OK</span></td>
+                      <td style={{ fontFamily: 'monospace' }}>{log.latencyMs}ms</td>
+                      <td>{log.tokens.total}</td>
+                      <td style={{ color: '#10b981', fontFamily: 'monospace' }}>${log.cost.toFixed(5)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Log Detail Modal */}
+            {selectedLog && (
+              <div className="modal-overlay">
+                <div className="modal-content" style={{ maxWidth: '640px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Terminal size={18} color="#60a5fa" />
+                      <h3 style={{ fontSize: '1.125rem', fontWeight: 600 }}>Request Details: {selectedLog.id}</h3>
+                    </div>
+                    <button onClick={() => setSelectedLog(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}>
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem', fontSize: '0.8125rem' }}>
+                    <div className="card" style={{ padding: '0.75rem' }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Model</div>
+                      <div style={{ fontWeight: 600 }}>{selectedLog.model}</div>
+                    </div>
+                    <div className="card" style={{ padding: '0.75rem' }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Latency</div>
+                      <div style={{ fontWeight: 600 }}>{selectedLog.latencyMs}ms</div>
+                    </div>
+                    <div className="card" style={{ padding: '0.75rem' }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Tokens (Prompt / Compl)</div>
+                      <div style={{ fontWeight: 600 }}>{selectedLog.tokens.prompt} / {selectedLog.tokens.completion} ({selectedLog.tokens.total} total)</div>
+                    </div>
+                    <div className="card" style={{ padding: '0.75rem' }}>
+                      <div style={{ color: 'var(--text-muted)' }}>Estimated Cost</div>
+                      <div style={{ fontWeight: 600, color: '#10b981' }}>${selectedLog.cost.toFixed(5)}</div>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: '1rem' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>RAW TRACE PAYLOAD</div>
+                    <pre style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '6px', padding: '0.75rem', fontSize: '0.75rem', fontFamily: 'monospace', color: '#93c5fd', overflowX: 'auto' }}>
+                      {JSON.stringify(selectedLog, null, 2)}
+                    </pre>
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                    <button onClick={() => setSelectedLog(null)} className="btn btn-secondary">Close</button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 6. TOP UP TAB */}
         {activeTab === 'top-up' && (
           <div className="page-container" style={{ maxWidth: '680px' }}>
             <div className="page-header">
@@ -1026,7 +1581,6 @@ func main() {
               <p className="page-subtitle">Recharge your API credit balance for uninterrupted model inference & endpoint queries.</p>
             </div>
 
-            {/* Currency Selector */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', background: 'var(--bg-secondary)', padding: '0.25rem', borderRadius: '8px', width: 'fit-content', border: '1px solid var(--border-color)' }}>
               <button 
                 onClick={() => setSelectedCurrency('USD')}
@@ -1044,7 +1598,6 @@ func main() {
               </button>
             </div>
 
-            {/* Amount Selection Chips */}
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                 Select Recharge Amount
@@ -1074,7 +1627,6 @@ func main() {
                 ))}
               </div>
 
-              {/* Custom Amount Input */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>Custom:</span>
                 <input 
@@ -1092,7 +1644,6 @@ func main() {
               </div>
             </div>
 
-            {/* Total Summary Card */}
             <div className="card" style={{ marginBottom: '1.5rem', background: 'var(--bg-secondary)' }}>
               <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>TOTAL CHECKOUT AMOUNT</div>
               <div style={{ fontSize: '2rem', fontWeight: 800, margin: '0.25rem 0', color: 'var(--text-primary)' }}>
@@ -1104,7 +1655,6 @@ func main() {
               </div>
             </div>
 
-            {/* Payment Method Selector */}
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.875rem', fontWeight: 600, marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>
                 Payment Method
@@ -1153,7 +1703,7 @@ func main() {
           </div>
         )}
 
-        {/* 5. BILLING & INVOICES TAB */}
+        {/* 7. BILLING & INVOICES TAB */}
         {activeTab === 'billing' && (
           <div className="page-container">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.5rem' }}>
@@ -1178,7 +1728,7 @@ func main() {
             <div className="card-grid" style={{ marginBottom: '1.5rem' }}>
               <div className="card">
                 <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>ACTIVE SUBSCRIPTION</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.375rem 0' }}>Pro Platform Plan</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.375rem 0' }}>{userProfile.planName}</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
                   <span className="badge badge-success">Active</span>
                   <span style={{ color: 'var(--text-muted)' }}>Renews next month ($49/mo)</span>
@@ -1187,7 +1737,9 @@ func main() {
 
               <div className="card">
                 <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>AVAILABLE PREPAID CREDITS</div>
-                <div style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.375rem 0', color: '#10b981' }}>$124.50 USD</div>
+                <div style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.375rem 0', color: '#10b981' }}>
+                  ${userProfile.creditBalance.toFixed(2)} USD
+                </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Auto-deducted per API invocation</span>
                   <button 
@@ -1263,7 +1815,7 @@ func main() {
           </div>
         )}
 
-        {/* 6. DEVELOPER DOCS TAB */}
+        {/* 8. DEVELOPER DOCS TAB */}
         {activeTab === 'docs' && (
           <div className="page-container" style={{ maxWidth: '900px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.8125rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
@@ -1277,7 +1829,6 @@ func main() {
               The Keepseed API follows modern OpenAI & Anthropic standards. Easily swap endpoints in existing SDK libraries with drop-in compatibility.
             </p>
 
-            {/* Endpoints Table */}
             <div className="table-wrapper" style={{ marginBottom: '2rem' }}>
               <table className="data-table">
                 <thead>
@@ -1307,7 +1858,6 @@ func main() {
               </table>
             </div>
 
-            {/* SDK Code Snippets */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h2 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Integration Code Example</h2>
             </div>
@@ -1338,7 +1888,6 @@ func main() {
               <pre className="code-pre-content">{getCodeSnippet()}</pre>
             </div>
 
-            {/* Interactive API Tester */}
             <div className="card" style={{ marginTop: '2rem' }}>
               <div className="card-title">
                 <Play size={18} />
@@ -1374,14 +1923,13 @@ func main() {
           </div>
         )}
 
-        {/* 7. PRICING TAB */}
+        {/* 9. PRICING TAB */}
         {activeTab === 'pricing' && (
           <div className="page-container">
             <div className="page-header" style={{ textAlign: 'center', maxWidth: '600px', margin: '0 auto 2.5rem' }}>
               <h1 className="page-title">Predictable, Transparent Pricing</h1>
               <p className="page-subtitle">Choose the subscription tier tailored for your workload with instant Stripe provisioning.</p>
 
-              {/* Monthly / Yearly Toggle */}
               <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', background: 'var(--bg-secondary)', padding: '0.25rem', borderRadius: '9999px', border: '1px solid var(--border-color)', marginTop: '1.25rem' }}>
                 <button 
                   onClick={() => setBillingCycle('monthly')}
@@ -1401,7 +1949,6 @@ func main() {
             </div>
 
             <div className="pricing-grid">
-              {/* Starter Plan */}
               <div className="pricing-card">
                 <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Starter Plan</div>
                 <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>For indie developers & prototypes.</p>
@@ -1427,7 +1974,6 @@ func main() {
                 </button>
               </div>
 
-              {/* Pro Plan (Featured) */}
               <div className="pricing-card featured">
                 <div className="featured-pill">RECOMMENDED</div>
                 <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Pro Platform</div>
@@ -1455,7 +2001,6 @@ func main() {
                 </button>
               </div>
 
-              {/* Enterprise Plan */}
               <div className="pricing-card">
                 <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Enterprise</div>
                 <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>For high volume & bespoke SLA.</p>
@@ -1482,7 +2027,7 @@ func main() {
           </div>
         )}
 
-        {/* 8. HELP & FAQ TAB */}
+        {/* 10. HELP & FAQ TAB */}
         {activeTab === 'help' && (
           <div className="page-container" style={{ maxWidth: '800px' }}>
             <div className="page-header">
