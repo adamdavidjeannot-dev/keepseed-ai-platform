@@ -2143,33 +2143,7 @@ func main() {
             </div>
 
             <div className="pricing-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1.25rem' }}>
-              {/* 1. Starter ($7.99) */}
-              <div className="pricing-card">
-                <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Starter</div>
-                <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Indie prototype tier for personal experimentation.</p>
-
-                <div className="plan-price">
-                  ${billingCycle === 'monthly' ? '7.99' : '5.99'}
-                  <span className="plan-price-period">/ mo</span>
-                </div>
-
-                <ul className="plan-features-list">
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 1,000,000 monthly token quota</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Unlimited Keepseed-Flash</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> 1,000 RPM rate limit</li>
-                  <li className="plan-feature-item"><Check size={16} color="#10b981" /> Standard community support</li>
-                </ul>
-
-                <button 
-                  onClick={() => handleCheckoutSubscription('starter')}
-                  disabled={loadingAction === 'sub_starter'}
-                  className="btn btn-secondary btn-block"
-                >
-                  {loadingAction === 'sub_starter' ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : 'Subscribe ($7.99)'}
-                </button>
-              </div>
-
-              {/* 2. Pro ($12.99) */}
+              {/* 1. Pro ($12.99) */}
               <div className="pricing-card">
                 <div style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--text-primary)' }}>Keepseed Pro</div>
                 <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>Unlimited Flash model with Pro model access.</p>
