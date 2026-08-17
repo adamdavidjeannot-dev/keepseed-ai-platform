@@ -78,10 +78,10 @@ export default function App() {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        alert('Stripe Top-Up Checkout endpoint ready. Set STRIPE_SECRET_KEY in server/.env to enable live redirection.');
+        alert(data.error || 'Failed to create top-up checkout session.');
       }
-    } catch (err) {
-      alert('Stripe Top-Up Checkout endpoint ready at /api/create-topup-checkout');
+    } catch (err: any) {
+      alert(`Top-Up Checkout error: ${err.message || 'Network error'}`);
     }
   };
 
@@ -96,10 +96,10 @@ export default function App() {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        alert(`Stripe Subscription Checkout initiated for ${priceId}. Set STRIPE_SECRET_KEY in server/.env.`);
+        alert(data.error || 'Failed to create subscription checkout session.');
       }
-    } catch (err) {
-      alert('Stripe Subscription Checkout endpoint ready at /api/create-subscription-checkout');
+    } catch (err: any) {
+      alert(`Subscription error: ${err.message || 'Network error'}`);
     }
   };
 
@@ -114,10 +114,10 @@ export default function App() {
       if (data.url) {
         window.location.href = data.url;
       } else {
-        alert('Stripe Customer Portal endpoint ready. Set STRIPE_SECRET_KEY in server/.env.');
+        alert(data.error || 'Failed to open customer portal.');
       }
-    } catch (err) {
-      alert('Stripe Customer Portal endpoint ready at /api/create-portal-session');
+    } catch (err: any) {
+      alert(`Customer Portal error: ${err.message || 'Network error'}`);
     }
   };
 
